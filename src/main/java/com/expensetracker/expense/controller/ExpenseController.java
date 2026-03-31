@@ -1,15 +1,20 @@
 package com.expensetracker.expense.controller;
 
 import com.expensetracker.common.dto.PagedResponse;
+import com.expensetracker.expense.dto.ExpenseQueryParams;
 import com.expensetracker.expense.dto.ExpenseRequest;
 import com.expensetracker.expense.dto.ExpenseResponse;
 import com.expensetracker.expense.service.ExpenseService;
 import com.expensetracker.user.entity.User;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -36,9 +41,29 @@ public class ExpenseController {
             @AuthenticationPrincipal User user,
             @RequestParam(defaultValue = "0") @Min(value = 0, message = "Page must be zero or greater") int page,
             @RequestParam(defaultValue = "10") @Min(value = 1, message = "Size must be at least 1")
-            @Max(value = 100, message = "Size must be at most 100") int size
+            @Max(value = 100, message = "Size must be at most 100") int size,
+            @RequestParam(defaultValue = "expenseDate") String sortBy,
+            @RequestParam(defaultValue = "desc") String sortDir,
+            @RequestParam(required = false) Long categoryId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) @DecimalMin(value = "0.0", inclusive = true,
+                    message = "minAmount must be zero or greater") BigDecimal minAmount,
+            @RequestParam(required = false) @DecimalMin(value = "0.0", inclusive = true,
+                    message = "maxAmount must be zero or greater") BigDecimal maxAmount
     ) {
-        return expenseService.getExpenses(user, page, size);
+        ExpenseQueryParams queryParams = new ExpenseQueryParams(
+                page,
+                size,
+                sortBy,
+                sortDir,
+                categoryId,
+                startDate,
+                endDate,
+                minAmount,
+                maxAmount
+        );
+        return expenseService.getExpenses(user, queryParams);
     }
 
     @GetMapping("/{expenseId}")

@@ -3,16 +3,23 @@ package com.expensetracker.expense.service;
 import com.expensetracker.category.entity.Category;
 import com.expensetracker.category.service.CategoryService;
 import com.expensetracker.common.dto.PagedResponse;
+import com.expensetracker.common.exception.BadRequestException;
 import com.expensetracker.common.exception.ResourceNotFoundException;
+import com.expensetracker.expense.dto.ExpenseQueryParams;
 import com.expensetracker.expense.dto.ExpenseRequest;
 import com.expensetracker.expense.dto.ExpenseResponse;
 import com.expensetracker.expense.entity.Expense;
 import com.expensetracker.expense.repository.ExpenseRepository;
+import com.expensetracker.expense.repository.ExpenseSpecifications;
 import com.expensetracker.user.entity.User;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,18 +27,31 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class ExpenseService {
 
+    private static final Map<String, String> SORT_FIELDS = Map.of(
+            "expenseDate", "expenseDate",
+            "amount", "amount",
+            "createdAt", "createdAt"
+    );
+
     private final ExpenseRepository expenseRepository;
     private final CategoryService categoryService;
 
     @Transactional(readOnly = true)
-    public PagedResponse<ExpenseResponse> getExpenses(User user, int page, int size) {
+    public PagedResponse<ExpenseResponse> getExpenses(User user, ExpenseQueryParams queryParams) {
+        validateQueryParams(queryParams);
+        if (queryParams.categoryId() != null) {
+            categoryService.getAccessibleCategory(queryParams.categoryId(), user.getId());
+        }
+
         Pageable pageable = PageRequest.of(
-                page,
-                size,
-                Sort.by(Sort.Order.desc("expenseDate"), Sort.Order.desc("id"))
+                queryParams.page(),
+                queryParams.size(),
+                buildSort(queryParams.sortBy(), queryParams.sortDir())
         );
 
-        return PagedResponse.from(expenseRepository.findAllByUserId(user.getId(), pageable)
+        Specification<Expense> specification = buildSpecification(user.getId(), queryParams);
+
+        return PagedResponse.from(expenseRepository.findAll(specification, pageable)
                 .map(ExpenseResponse::from));
     }
 
@@ -78,6 +98,52 @@ public class ExpenseService {
     private Expense findUserExpense(Long expenseId, Long userId) {
         return expenseRepository.findByIdAndUserId(expenseId, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Expense not found"));
+    }
+
+    private Specification<Expense> buildSpecification(Long userId, ExpenseQueryParams queryParams) {
+        Specification<Expense> specification = Specification.where(ExpenseSpecifications.hasUserId(userId));
+
+        if (queryParams.categoryId() != null) {
+            specification = specification.and(ExpenseSpecifications.hasCategoryId(queryParams.categoryId()));
+        }
+        if (queryParams.startDate() != null) {
+            specification = specification.and(ExpenseSpecifications.expenseDateGreaterThanOrEqualTo(queryParams.startDate()));
+        }
+        if (queryParams.endDate() != null) {
+            specification = specification.and(ExpenseSpecifications.expenseDateLessThanOrEqualTo(queryParams.endDate()));
+        }
+        if (queryParams.minAmount() != null) {
+            specification = specification.and(ExpenseSpecifications.amountGreaterThanOrEqualTo(queryParams.minAmount()));
+        }
+        if (queryParams.maxAmount() != null) {
+            specification = specification.and(ExpenseSpecifications.amountLessThanOrEqualTo(queryParams.maxAmount()));
+        }
+
+        return specification;
+    }
+
+    private Sort buildSort(String sortBy, String sortDir) {
+        String sortField = SORT_FIELDS.get(sortBy);
+        if (sortField == null) {
+            throw new BadRequestException("Unsupported sortBy value");
+        }
+
+        Sort.Direction direction = "asc".equalsIgnoreCase(sortDir) ? Sort.Direction.ASC : Sort.Direction.DESC;
+        return Sort.by(new Sort.Order(direction, sortField), new Sort.Order(Sort.Direction.DESC, "id"));
+    }
+
+    private void validateQueryParams(ExpenseQueryParams queryParams) {
+        LocalDate startDate = queryParams.startDate();
+        LocalDate endDate = queryParams.endDate();
+        BigDecimal minAmount = queryParams.minAmount();
+        BigDecimal maxAmount = queryParams.maxAmount();
+
+        if (startDate != null && endDate != null && startDate.isAfter(endDate)) {
+            throw new BadRequestException("startDate must be before or equal to endDate");
+        }
+        if (minAmount != null && maxAmount != null && minAmount.compareTo(maxAmount) > 0) {
+            throw new BadRequestException("minAmount must be less than or equal to maxAmount");
+        }
     }
 
     private String trimToNull(String value) {

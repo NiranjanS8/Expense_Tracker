@@ -11,6 +11,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -24,6 +25,19 @@ public class GlobalExceptionHandler {
                 .getFieldErrors()
                 .stream()
                 .map(this::formatFieldError)
+                .toList();
+
+        return buildResponse(HttpStatus.BAD_REQUEST, "Validation failed", request.getRequestURI(), details);
+    }
+
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    public ResponseEntity<ApiErrorResponse> handleHandlerMethodValidationException(
+            HandlerMethodValidationException exception,
+            HttpServletRequest request
+    ) {
+        List<String> details = exception.getAllErrors()
+                .stream()
+                .map(error -> error.getDefaultMessage() == null ? "Validation failed" : error.getDefaultMessage())
                 .toList();
 
         return buildResponse(HttpStatus.BAD_REQUEST, "Validation failed", request.getRequestURI(), details);
