@@ -2,14 +2,17 @@ package com.expensetracker.expense.service;
 
 import com.expensetracker.category.entity.Category;
 import com.expensetracker.category.service.CategoryService;
+import com.expensetracker.common.dto.PagedResponse;
 import com.expensetracker.common.exception.ResourceNotFoundException;
 import com.expensetracker.expense.dto.ExpenseRequest;
 import com.expensetracker.expense.dto.ExpenseResponse;
 import com.expensetracker.expense.entity.Expense;
 import com.expensetracker.expense.repository.ExpenseRepository;
 import com.expensetracker.user.entity.User;
-import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,11 +24,15 @@ public class ExpenseService {
     private final CategoryService categoryService;
 
     @Transactional(readOnly = true)
-    public List<ExpenseResponse> getExpenses(User user) {
-        return expenseRepository.findAllByUserIdOrderByExpenseDateDescIdDesc(user.getId())
-                .stream()
-                .map(ExpenseResponse::from)
-                .toList();
+    public PagedResponse<ExpenseResponse> getExpenses(User user, int page, int size) {
+        Pageable pageable = PageRequest.of(
+                page,
+                size,
+                Sort.by(Sort.Order.desc("expenseDate"), Sort.Order.desc("id"))
+        );
+
+        return PagedResponse.from(expenseRepository.findAllByUserId(user.getId(), pageable)
+                .map(ExpenseResponse::from));
     }
 
     @Transactional(readOnly = true)
