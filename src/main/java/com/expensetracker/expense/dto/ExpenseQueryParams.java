@@ -8,6 +8,7 @@ public record ExpenseQueryParams(
         int size,
         String sortBy,
         String sortDir,
+        String search,
         Long categoryId,
         LocalDate startDate,
         LocalDate endDate,

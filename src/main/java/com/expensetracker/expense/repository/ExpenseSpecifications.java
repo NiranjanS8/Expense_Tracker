@@ -4,6 +4,7 @@ import com.expensetracker.expense.entity.Expense;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import org.springframework.data.jpa.domain.Specification;
+import jakarta.persistence.criteria.JoinType;
 
 public final class ExpenseSpecifications {
 
@@ -32,5 +33,15 @@ public final class ExpenseSpecifications {
 
     public static Specification<Expense> amountLessThanOrEqualTo(BigDecimal maxAmount) {
         return (root, query, criteriaBuilder) -> criteriaBuilder.lessThanOrEqualTo(root.get("amount"), maxAmount);
+    }
+
+    public static Specification<Expense> matchesSearchTerm(String searchTerm) {
+        return (root, query, criteriaBuilder) -> {
+            String pattern = "%" + searchTerm.toLowerCase() + "%";
+            return criteriaBuilder.or(
+                    criteriaBuilder.like(criteriaBuilder.lower(root.get("description")), pattern),
+                    criteriaBuilder.like(criteriaBuilder.lower(root.join("category", JoinType.LEFT).get("name")), pattern)
+            );
+        };
     }
 }

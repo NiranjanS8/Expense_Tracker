@@ -32,6 +32,8 @@ public class ExpenseService {
             "amount", "amount",
             "createdAt", "createdAt"
     );
+    private static final String SORT_DIRECTION_ASC = "asc";
+    private static final String SORT_DIRECTION_DESC = "desc";
 
     private final ExpenseRepository expenseRepository;
     private final CategoryService categoryService;
@@ -118,17 +120,26 @@ public class ExpenseService {
         if (queryParams.maxAmount() != null) {
             specification = specification.and(ExpenseSpecifications.amountLessThanOrEqualTo(queryParams.maxAmount()));
         }
+        if (hasText(queryParams.search())) {
+            specification = specification.and(ExpenseSpecifications.matchesSearchTerm(queryParams.search().trim()));
+        }
 
         return specification;
     }
 
     private Sort buildSort(String sortBy, String sortDir) {
-        String sortField = SORT_FIELDS.get(sortBy);
+        String normalizedSortBy = sortBy == null ? "expenseDate" : sortBy.trim();
+        String sortField = SORT_FIELDS.get(normalizedSortBy);
         if (sortField == null) {
             throw new BadRequestException("Unsupported sortBy value");
         }
 
-        Sort.Direction direction = "asc".equalsIgnoreCase(sortDir) ? Sort.Direction.ASC : Sort.Direction.DESC;
+        String normalizedSortDir = sortDir == null ? SORT_DIRECTION_DESC : sortDir.trim().toLowerCase();
+        if (!SORT_DIRECTION_ASC.equals(normalizedSortDir) && !SORT_DIRECTION_DESC.equals(normalizedSortDir)) {
+            throw new BadRequestException("Unsupported sortDir value");
+        }
+
+        Sort.Direction direction = SORT_DIRECTION_ASC.equals(normalizedSortDir) ? Sort.Direction.ASC : Sort.Direction.DESC;
         return Sort.by(new Sort.Order(direction, sortField), new Sort.Order(Sort.Direction.DESC, "id"));
     }
 
@@ -144,6 +155,10 @@ public class ExpenseService {
         if (minAmount != null && maxAmount != null && minAmount.compareTo(maxAmount) > 0) {
             throw new BadRequestException("minAmount must be less than or equal to maxAmount");
         }
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
     }
 
     private String trimToNull(String value) {
