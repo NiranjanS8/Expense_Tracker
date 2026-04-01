@@ -1,11 +1,15 @@
 package com.expensetracker.budget.controller;
 
+import com.expensetracker.budget.dto.BudgetQueryParams;
 import com.expensetracker.budget.dto.BudgetRequest;
 import com.expensetracker.budget.dto.BudgetSummaryResponse;
 import com.expensetracker.budget.service.BudgetService;
 import com.expensetracker.user.entity.User;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import java.time.YearMonth;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -17,6 +21,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -57,5 +62,14 @@ public class BudgetController {
     @GetMapping("/current")
     public BudgetSummaryResponse getCurrentMonthBudget(@AuthenticationPrincipal User user) {
         return budgetService.getCurrentMonthBudget(user);
+    }
+
+    @GetMapping
+    public List<BudgetSummaryResponse> getBudgetHistory(
+            @AuthenticationPrincipal User user,
+            @RequestParam(required = false) @Min(value = 2000, message = "year must be 2000 or greater")
+            @Max(value = 2100, message = "year must be 2100 or less") Integer year
+    ) {
+        return budgetService.getBudgetHistory(new BudgetQueryParams(null, year), user);
     }
 }

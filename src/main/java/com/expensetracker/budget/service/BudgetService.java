@@ -2,6 +2,7 @@ package com.expensetracker.budget.service;
 
 import com.expensetracker.budget.config.BudgetAlertProperties;
 import com.expensetracker.budget.dto.BudgetAlertLevel;
+import com.expensetracker.budget.dto.BudgetQueryParams;
 import com.expensetracker.budget.dto.BudgetRequest;
 import com.expensetracker.budget.dto.BudgetStatus;
 import com.expensetracker.budget.dto.BudgetSummaryResponse;
@@ -62,6 +63,26 @@ public class BudgetService {
     @Transactional(readOnly = true)
     public BudgetSummaryResponse getCurrentMonthBudget(User user) {
         return toBudgetResponse(findBudgetByMonth(user.getId(), YearMonth.now()));
+    }
+
+    @Transactional(readOnly = true)
+    public List<BudgetSummaryResponse> getBudgetHistory(BudgetQueryParams queryParams, User user) {
+        List<Budget> budgets;
+        if (queryParams.year() != null) {
+            YearMonth startMonth = YearMonth.of(queryParams.year(), 1);
+            YearMonth endMonth = YearMonth.of(queryParams.year(), 12);
+            budgets = budgetRepository.findAllByUserIdAndBudgetMonthBetweenOrderByBudgetMonthDesc(
+                    user.getId(),
+                    startMonth,
+                    endMonth
+            );
+        } else {
+            budgets = budgetRepository.findAllByUserIdOrderByBudgetMonthDesc(user.getId());
+        }
+
+        return budgets.stream()
+                .map(this::toBudgetResponse)
+                .toList();
     }
 
     private Budget findBudgetByMonth(Long userId, YearMonth budgetMonth) {
