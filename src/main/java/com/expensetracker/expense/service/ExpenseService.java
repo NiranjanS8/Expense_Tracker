@@ -15,6 +15,7 @@ import com.expensetracker.smartcategory.service.SmartCategoryService;
 import com.expensetracker.user.entity.User;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -57,6 +58,22 @@ public class ExpenseService {
 
         return PagedResponse.from(expenseRepository.findAll(specification, pageable)
                 .map(ExpenseResponse::from));
+    }
+
+    @Transactional(readOnly = true)
+    public List<ExpenseResponse> getExpensesForExport(User user, ExpenseQueryParams queryParams) {
+        validateQueryParams(queryParams);
+        if (queryParams.categoryId() != null) {
+            categoryService.getAccessibleCategory(queryParams.categoryId(), user.getId());
+        }
+
+        Sort sort = buildSort(queryParams.sortBy(), queryParams.sortDir());
+        Specification<Expense> specification = buildSpecification(user.getId(), queryParams);
+
+        return expenseRepository.findAll(specification, sort)
+                .stream()
+                .map(ExpenseResponse::from)
+                .toList();
     }
 
     @Transactional(readOnly = true)
