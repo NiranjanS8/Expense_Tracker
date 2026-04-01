@@ -11,6 +11,7 @@ import com.expensetracker.expense.dto.ExpenseResponse;
 import com.expensetracker.expense.entity.Expense;
 import com.expensetracker.expense.repository.ExpenseRepository;
 import com.expensetracker.expense.repository.ExpenseSpecifications;
+import com.expensetracker.smartcategory.service.SmartCategoryService;
 import com.expensetracker.user.entity.User;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -37,6 +38,7 @@ public class ExpenseService {
 
     private final ExpenseRepository expenseRepository;
     private final CategoryService categoryService;
+    private final SmartCategoryService smartCategoryService;
 
     @Transactional(readOnly = true)
     public PagedResponse<ExpenseResponse> getExpenses(User user, ExpenseQueryParams queryParams) {
@@ -64,7 +66,7 @@ public class ExpenseService {
 
     @Transactional
     public ExpenseResponse createExpense(ExpenseRequest request, User user) {
-        Category category = categoryService.getAccessibleCategory(request.categoryId(), user.getId());
+        Category category = resolveExpenseCategory(request, user);
 
         Expense expense = new Expense();
         expense.setUser(user);
@@ -80,7 +82,7 @@ public class ExpenseService {
     @Transactional
     public ExpenseResponse updateExpense(Long expenseId, ExpenseRequest request, User user) {
         Expense expense = findUserExpense(expenseId, user.getId());
-        Category category = categoryService.getAccessibleCategory(request.categoryId(), user.getId());
+        Category category = resolveExpenseCategory(request, user);
 
         expense.setCategory(category);
         expense.setAmount(request.amount());
@@ -159,6 +161,17 @@ public class ExpenseService {
 
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    private Category resolveExpenseCategory(ExpenseRequest request, User user) {
+        if (request.categoryId() != null) {
+            return categoryService.getAccessibleCategory(request.categoryId(), user.getId());
+        }
+
+        return smartCategoryService.suggestCategory(request.description(), user.getId())
+                .orElseThrow(() -> new BadRequestException(
+                        "Category id is required unless a smart category rule matches the description"
+                ));
     }
 
     private String trimToNull(String value) {
