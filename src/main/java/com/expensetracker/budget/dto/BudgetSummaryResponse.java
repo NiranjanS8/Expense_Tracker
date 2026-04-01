@@ -3,6 +3,7 @@ package com.expensetracker.budget.dto;
 import com.expensetracker.budget.entity.Budget;
 import java.math.BigDecimal;
 import java.time.YearMonth;
+import java.util.List;
 
 public record BudgetSummaryResponse(
         Long id,
@@ -14,14 +15,21 @@ public record BudgetSummaryResponse(
         BigDecimal usagePercentage,
         boolean exceeded,
         boolean hasRemainingBudget,
-        BudgetStatus status
+        BudgetStatus status,
+        BudgetAlertLevel alertLevel,
+        String alertMessage,
+        List<Integer> triggeredThresholds
 ) {
     public static BudgetSummaryResponse from(
             Budget budget,
             BigDecimal spentAmount,
             BigDecimal remainingAmount,
             BigDecimal overBudgetAmount,
-            BigDecimal usagePercentage
+            BigDecimal usagePercentage,
+            BudgetStatus status,
+            BudgetAlertLevel alertLevel,
+            String alertMessage,
+            List<Integer> triggeredThresholds
     ) {
         boolean exceeded = overBudgetAmount.compareTo(BigDecimal.ZERO) > 0;
         boolean hasRemainingBudget = remainingAmount.compareTo(BigDecimal.ZERO) > 0;
@@ -36,7 +44,10 @@ public record BudgetSummaryResponse(
                 usagePercentage,
                 exceeded,
                 hasRemainingBudget,
-                exceeded ? BudgetStatus.EXCEEDED : BudgetStatus.ON_TRACK
+                status,
+                alertLevel,
+                alertMessage,
+                triggeredThresholds
         );
     }
 }

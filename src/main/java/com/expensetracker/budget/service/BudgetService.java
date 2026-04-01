@@ -1,6 +1,9 @@
 package com.expensetracker.budget.service;
 
+import com.expensetracker.budget.config.BudgetAlertProperties;
+import com.expensetracker.budget.dto.BudgetAlertLevel;
 import com.expensetracker.budget.dto.BudgetRequest;
+import com.expensetracker.budget.dto.BudgetStatus;
 import com.expensetracker.budget.dto.BudgetSummaryResponse;
 import com.expensetracker.budget.entity.Budget;
 import com.expensetracker.budget.repository.BudgetRepository;
@@ -10,8 +13,9 @@ import com.expensetracker.expense.repository.ExpenseRepository;
 import com.expensetracker.user.entity.User;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.LocalDate;
 import java.time.YearMonth;
+import java.util.Comparator;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,6 +26,7 @@ public class BudgetService {
 
     private final BudgetRepository budgetRepository;
     private final ExpenseRepository expenseRepository;
+    private final BudgetAlertProperties budgetAlertProperties;
 
     @Transactional
     public BudgetSummaryResponse createBudget(BudgetRequest request, User user) {
@@ -75,13 +80,21 @@ public class BudgetService {
         BigDecimal remainingAmount = budgetAmount.subtract(safeSpentAmount).max(BigDecimal.ZERO);
         BigDecimal overBudgetAmount = safeSpentAmount.subtract(budgetAmount).max(BigDecimal.ZERO);
         BigDecimal usagePercentage = calculateUsagePercentage(safeSpentAmount, budgetAmount);
+        List<Integer> triggeredThresholds = resolveTriggeredThresholds(usagePercentage);
+        BudgetStatus status = resolveStatus(overBudgetAmount, triggeredThresholds);
+        BudgetAlertLevel alertLevel = resolveAlertLevel(status);
+        String alertMessage = buildAlertMessage(status, budgetAmount, usagePercentage, triggeredThresholds);
 
         return BudgetSummaryResponse.from(
                 budget,
                 safeSpentAmount,
                 remainingAmount,
                 overBudgetAmount,
-                usagePercentage
+                usagePercentage,
+                status,
+                alertLevel,
+                alertMessage,
+                triggeredThresholds
         );
     }
 
@@ -97,5 +110,57 @@ public class BudgetService {
 
     private BigDecimal defaultAmount(BigDecimal value) {
         return value == null ? BigDecimal.ZERO : value;
+    }
+
+    private List<Integer> resolveTriggeredThresholds(BigDecimal usagePercentage) {
+        return budgetAlertProperties.thresholds()
+                .stream()
+                .filter(threshold -> usagePercentage.compareTo(BigDecimal.valueOf(threshold)) >= 0)
+                .sorted(Comparator.naturalOrder())
+                .toList();
+    }
+
+    private BudgetStatus resolveStatus(BigDecimal overBudgetAmount, List<Integer> triggeredThresholds) {
+        if (overBudgetAmount.compareTo(BigDecimal.ZERO) > 0) {
+            return BudgetStatus.EXCEEDED;
+        }
+        if (triggeredThresholds.contains(90)) {
+            return BudgetStatus.CRITICAL;
+        }
+        if (triggeredThresholds.contains(80)) {
+            return BudgetStatus.WARNING;
+        }
+        return BudgetStatus.ON_TRACK;
+    }
+
+    private BudgetAlertLevel resolveAlertLevel(BudgetStatus status) {
+        return switch (status) {
+            case ON_TRACK -> BudgetAlertLevel.NONE;
+            case WARNING -> BudgetAlertLevel.WARNING;
+            case CRITICAL -> BudgetAlertLevel.CRITICAL;
+            case EXCEEDED -> BudgetAlertLevel.EXCEEDED;
+        };
+    }
+
+    private String buildAlertMessage(
+            BudgetStatus status,
+            BigDecimal budgetAmount,
+            BigDecimal usagePercentage,
+            List<Integer> triggeredThresholds
+    ) {
+        return switch (status) {
+            case ON_TRACK -> "Budget is within the safe spending range.";
+            case WARNING -> "Budget usage has crossed " + maxTriggeredThreshold(triggeredThresholds)
+                    + "% of the monthly limit.";
+            case CRITICAL -> "Budget usage is critically high at " + usagePercentage
+                    + "% of the monthly limit.";
+            case EXCEEDED -> "Budget has been exceeded for the month.";
+        };
+    }
+
+    private int maxTriggeredThreshold(List<Integer> triggeredThresholds) {
+        return triggeredThresholds.stream()
+                .max(Integer::compareTo)
+                .orElse(0);
     }
 }

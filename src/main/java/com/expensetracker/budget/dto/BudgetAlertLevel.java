@@ -1,7 +1,7 @@
 package com.expensetracker.budget.dto;
 
-public enum BudgetStatus {
-    ON_TRACK,
+public enum BudgetAlertLevel {
+    NONE,
     WARNING,
     CRITICAL,
     EXCEEDED
