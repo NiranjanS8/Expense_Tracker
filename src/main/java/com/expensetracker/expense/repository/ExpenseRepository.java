@@ -19,6 +19,8 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long>, JpaSpec
 
     Optional<Expense> findByIdAndUserId(Long id, Long userId);
 
+    boolean existsByRecurringExpenseIdAndExpenseDate(Long recurringExpenseId, LocalDate expenseDate);
+
     long countByUserId(Long userId);
 
     long countByUserIdAndExpenseDateBetween(Long userId, LocalDate startDate, LocalDate endDate);
