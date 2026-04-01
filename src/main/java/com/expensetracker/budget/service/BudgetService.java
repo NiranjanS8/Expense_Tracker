@@ -31,6 +31,7 @@ public class BudgetService {
 
     @Transactional
     public BudgetSummaryResponse createBudget(BudgetRequest request, User user) {
+        validateBudgetMonth(request.budgetMonth());
         if (budgetRepository.existsByUserIdAndBudgetMonth(user.getId(), request.budgetMonth())) {
             throw new BadRequestException("Budget already exists for the given month");
         }
@@ -45,6 +46,8 @@ public class BudgetService {
 
     @Transactional
     public BudgetSummaryResponse updateBudget(YearMonth budgetMonth, BudgetRequest request, User user) {
+        validateBudgetMonth(budgetMonth);
+        validateBudgetMonth(request.budgetMonth());
         if (!budgetMonth.equals(request.budgetMonth())) {
             throw new BadRequestException("Path month and request budgetMonth must match");
         }
@@ -57,18 +60,31 @@ public class BudgetService {
 
     @Transactional(readOnly = true)
     public BudgetSummaryResponse getBudgetByMonth(YearMonth budgetMonth, User user) {
+        validateBudgetMonth(budgetMonth);
         return toBudgetResponse(findBudgetByMonth(user.getId(), budgetMonth));
     }
 
     @Transactional(readOnly = true)
     public BudgetSummaryResponse getCurrentMonthBudget(User user) {
-        return toBudgetResponse(findBudgetByMonth(user.getId(), YearMonth.now()));
+        YearMonth currentMonth = YearMonth.now();
+        return budgetRepository.findByUserIdAndBudgetMonth(user.getId(), currentMonth)
+                .map(this::toBudgetResponse)
+                .orElseGet(() -> BudgetSummaryResponse.empty(currentMonth));
     }
 
     @Transactional(readOnly = true)
     public List<BudgetSummaryResponse> getBudgetHistory(BudgetQueryParams queryParams, User user) {
+        if (queryParams.year() != null && queryParams.budgetMonth() != null) {
+            throw new BadRequestException("Use either year or budgetMonth in history queries, not both");
+        }
+
         List<Budget> budgets;
-        if (queryParams.year() != null) {
+        if (queryParams.budgetMonth() != null) {
+            validateBudgetMonth(queryParams.budgetMonth());
+            budgets = budgetRepository.findByUserIdAndBudgetMonth(user.getId(), queryParams.budgetMonth())
+                    .stream()
+                    .toList();
+        } else if (queryParams.year() != null) {
             YearMonth startMonth = YearMonth.of(queryParams.year(), 1);
             YearMonth endMonth = YearMonth.of(queryParams.year(), 12);
             budgets = budgetRepository.findAllByUserIdAndBudgetMonthBetweenOrderByBudgetMonthDesc(
@@ -136,6 +152,7 @@ public class BudgetService {
     private List<Integer> resolveTriggeredThresholds(BigDecimal usagePercentage) {
         return budgetAlertProperties.thresholds()
                 .stream()
+                .filter(threshold -> threshold != null && threshold > 0)
                 .filter(threshold -> usagePercentage.compareTo(BigDecimal.valueOf(threshold)) >= 0)
                 .sorted(Comparator.naturalOrder())
                 .toList();
@@ -145,10 +162,10 @@ public class BudgetService {
         if (overBudgetAmount.compareTo(BigDecimal.ZERO) > 0) {
             return BudgetStatus.EXCEEDED;
         }
-        if (triggeredThresholds.contains(90)) {
+        if (hasTriggeredThreshold(triggeredThresholds, 90)) {
             return BudgetStatus.CRITICAL;
         }
-        if (triggeredThresholds.contains(80)) {
+        if (hasTriggeredThreshold(triggeredThresholds, 80)) {
             return BudgetStatus.WARNING;
         }
         return BudgetStatus.ON_TRACK;
@@ -183,5 +200,18 @@ public class BudgetService {
         return triggeredThresholds.stream()
                 .max(Integer::compareTo)
                 .orElse(0);
+    }
+
+    private boolean hasTriggeredThreshold(List<Integer> triggeredThresholds, int minimumThreshold) {
+        return triggeredThresholds.stream().anyMatch(threshold -> threshold >= minimumThreshold);
+    }
+
+    private void validateBudgetMonth(YearMonth budgetMonth) {
+        YearMonth earliestSupportedMonth = YearMonth.of(2000, 1);
+        YearMonth latestSupportedMonth = YearMonth.of(2100, 12);
+
+        if (budgetMonth.isBefore(earliestSupportedMonth) || budgetMonth.isAfter(latestSupportedMonth)) {
+            throw new BadRequestException("budgetMonth must be between 2000-01 and 2100-12");
+        }
     }
 }

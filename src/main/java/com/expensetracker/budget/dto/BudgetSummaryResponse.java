@@ -50,4 +50,22 @@ public record BudgetSummaryResponse(
                 triggeredThresholds
         );
     }
+
+    public static BudgetSummaryResponse empty(YearMonth budgetMonth) {
+        return new BudgetSummaryResponse(
+                null,
+                BigDecimal.ZERO,
+                budgetMonth,
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                false,
+                false,
+                BudgetStatus.ON_TRACK,
+                BudgetAlertLevel.NONE,
+                "No budget has been set for this month yet.",
+                List.of()
+        );
+    }
 }

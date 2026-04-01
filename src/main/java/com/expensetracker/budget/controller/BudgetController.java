@@ -67,9 +67,10 @@ public class BudgetController {
     @GetMapping
     public List<BudgetSummaryResponse> getBudgetHistory(
             @AuthenticationPrincipal User user,
+            @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM") YearMonth budgetMonth,
             @RequestParam(required = false) @Min(value = 2000, message = "year must be 2000 or greater")
             @Max(value = 2100, message = "year must be 2100 or less") Integer year
     ) {
-        return budgetService.getBudgetHistory(new BudgetQueryParams(null, year), user);
+        return budgetService.getBudgetHistory(new BudgetQueryParams(budgetMonth, year), user);
     }
 }
