@@ -1,7 +1,7 @@
 package com.expensetracker.budget.service;
 
 import com.expensetracker.budget.dto.BudgetRequest;
-import com.expensetracker.budget.dto.BudgetResponse;
+import com.expensetracker.budget.dto.BudgetSummaryResponse;
 import com.expensetracker.budget.entity.Budget;
 import com.expensetracker.budget.repository.BudgetRepository;
 import com.expensetracker.common.exception.BadRequestException;
@@ -24,7 +24,7 @@ public class BudgetService {
     private final ExpenseRepository expenseRepository;
 
     @Transactional
-    public BudgetResponse createBudget(BudgetRequest request, User user) {
+    public BudgetSummaryResponse createBudget(BudgetRequest request, User user) {
         if (budgetRepository.existsByUserIdAndBudgetMonth(user.getId(), request.budgetMonth())) {
             throw new BadRequestException("Budget already exists for the given month");
         }
@@ -38,7 +38,7 @@ public class BudgetService {
     }
 
     @Transactional
-    public BudgetResponse updateBudget(YearMonth budgetMonth, BudgetRequest request, User user) {
+    public BudgetSummaryResponse updateBudget(YearMonth budgetMonth, BudgetRequest request, User user) {
         if (!budgetMonth.equals(request.budgetMonth())) {
             throw new BadRequestException("Path month and request budgetMonth must match");
         }
@@ -50,12 +50,12 @@ public class BudgetService {
     }
 
     @Transactional(readOnly = true)
-    public BudgetResponse getBudgetByMonth(YearMonth budgetMonth, User user) {
+    public BudgetSummaryResponse getBudgetByMonth(YearMonth budgetMonth, User user) {
         return toBudgetResponse(findBudgetByMonth(user.getId(), budgetMonth));
     }
 
     @Transactional(readOnly = true)
-    public BudgetResponse getCurrentMonthBudget(User user) {
+    public BudgetSummaryResponse getCurrentMonthBudget(User user) {
         return toBudgetResponse(findBudgetByMonth(user.getId(), YearMonth.now()));
     }
 
@@ -64,7 +64,7 @@ public class BudgetService {
                 .orElseThrow(() -> new ResourceNotFoundException("Budget not found for the given month"));
     }
 
-    private BudgetResponse toBudgetResponse(Budget budget) {
+    private BudgetSummaryResponse toBudgetResponse(Budget budget) {
         BigDecimal spentAmount = expenseRepository.sumAmountByUserIdAndExpenseDateBetween(
                 budget.getUser().getId(),
                 budget.getBudgetMonth().atDay(1),
@@ -76,7 +76,7 @@ public class BudgetService {
         BigDecimal overBudgetAmount = safeSpentAmount.subtract(budgetAmount).max(BigDecimal.ZERO);
         BigDecimal usagePercentage = calculateUsagePercentage(safeSpentAmount, budgetAmount);
 
-        return BudgetResponse.from(
+        return BudgetSummaryResponse.from(
                 budget,
                 safeSpentAmount,
                 remainingAmount,

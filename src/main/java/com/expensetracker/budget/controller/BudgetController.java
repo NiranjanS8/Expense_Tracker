@@ -1,7 +1,7 @@
 package com.expensetracker.budget.controller;
 
 import com.expensetracker.budget.dto.BudgetRequest;
-import com.expensetracker.budget.dto.BudgetResponse;
+import com.expensetracker.budget.dto.BudgetSummaryResponse;
 import com.expensetracker.budget.service.BudgetService;
 import com.expensetracker.user.entity.User;
 import jakarta.validation.Valid;
@@ -30,7 +30,7 @@ public class BudgetController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public BudgetResponse createBudget(
+    public BudgetSummaryResponse createBudget(
             @Valid @RequestBody BudgetRequest request,
             @AuthenticationPrincipal User user
     ) {
@@ -38,7 +38,7 @@ public class BudgetController {
     }
 
     @PutMapping("/{budgetMonth}")
-    public BudgetResponse updateBudget(
+    public BudgetSummaryResponse updateBudget(
             @PathVariable @DateTimeFormat(pattern = "yyyy-MM") YearMonth budgetMonth,
             @Valid @RequestBody BudgetRequest request,
             @AuthenticationPrincipal User user
@@ -47,7 +47,7 @@ public class BudgetController {
     }
 
     @GetMapping("/{budgetMonth}")
-    public BudgetResponse getBudgetByMonth(
+    public BudgetSummaryResponse getBudgetByMonth(
             @PathVariable @DateTimeFormat(pattern = "yyyy-MM") YearMonth budgetMonth,
             @AuthenticationPrincipal User user
     ) {
@@ -55,7 +55,7 @@ public class BudgetController {
     }
 
     @GetMapping("/current")
-    public BudgetResponse getCurrentMonthBudget(@AuthenticationPrincipal User user) {
+    public BudgetSummaryResponse getCurrentMonthBudget(@AuthenticationPrincipal User user) {
         return budgetService.getCurrentMonthBudget(user);
     }
 }
