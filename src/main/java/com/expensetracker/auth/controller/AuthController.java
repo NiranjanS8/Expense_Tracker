@@ -6,6 +6,8 @@ import com.expensetracker.auth.dto.RegisterRequest;
 import com.expensetracker.observability.ObservabilityMetricsService;
 import com.expensetracker.auth.service.AuthService;
 import com.expensetracker.security.RateLimitService;
+import io.swagger.v3.oas.annotations.security.SecurityRequirements;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +21,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/auth")
 @RequiredArgsConstructor
+@Tag(name = "Authentication", description = "Registration and login endpoints")
+@SecurityRequirements
 public class AuthController {
 
     private final AuthService authService;

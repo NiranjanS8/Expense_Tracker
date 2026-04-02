@@ -15,6 +15,7 @@ import org.springframework.web.context.WebApplicationContext;
 
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -180,6 +181,20 @@ class AuthSecurityIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", equalTo("Validation failed")))
                 .andExpect(jsonPath("$.details", hasSize(3)));
+    }
+
+    @Test
+    void apiDocsShouldBePubliclyAccessible() throws Exception {
+        mockMvc.perform(get("/api/v3/api-docs").contextPath("/api"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.info.title", equalTo("Expense Tracker API")));
+    }
+
+    @Test
+    void swaggerUiShouldBePubliclyAccessible() throws Exception {
+        mockMvc.perform(get("/api/swagger-ui.html").contextPath("/api"))
+                .andExpect(status().isFound())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl("/api/swagger-ui/index.html"));
     }
 
     @Test
