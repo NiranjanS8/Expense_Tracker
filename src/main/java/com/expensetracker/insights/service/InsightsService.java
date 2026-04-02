@@ -107,6 +107,11 @@ public class InsightsService {
                     "No spending recorded",
                     "No expenses were recorded for " + month + "."
             ));
+            insights.add(new InsightItemResponse(
+                    "habit",
+                    "Spend baseline",
+                    "Average daily spend for " + month + " is 0.00."
+            ));
             return insights;
         }
 

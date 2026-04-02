@@ -1,5 +1,6 @@
 package com.expensetracker.insights.controller;
 
+import com.expensetracker.common.exception.BadRequestException;
 import com.expensetracker.insights.dto.InsightsSummaryResponse;
 import com.expensetracker.insights.service.InsightsService;
 import com.expensetracker.user.entity.User;
@@ -25,6 +26,11 @@ public class InsightsController {
             @AuthenticationPrincipal User user,
             @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM") YearMonth month
     ) {
-        return insightsService.getInsightsSummary(user, month == null ? YearMonth.now() : month);
+        YearMonth requestedMonth = month == null ? YearMonth.now() : month;
+        if (requestedMonth.isAfter(YearMonth.now())) {
+            throw new BadRequestException("Insights cannot be generated for future months");
+        }
+
+        return insightsService.getInsightsSummary(user, requestedMonth);
     }
 }

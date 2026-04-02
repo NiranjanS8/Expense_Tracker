@@ -78,7 +78,7 @@ public class GoalService {
         BigDecimal remainingAmount = goal.getTargetAmount().subtract(goal.getCurrentAmount()).max(BigDecimal.ZERO);
         BigDecimal progressPercentage = calculateProgress(goal.getCurrentAmount(), goal.getTargetAmount());
         BigDecimal requiredMonthlyContribution = calculateRequiredMonthlyContribution(remainingAmount, goal.getTargetDate());
-        GoalStatus status = determineStatus(goal, remainingAmount, requiredMonthlyContribution);
+        GoalStatus status = determineStatus(goal, progressPercentage);
 
         return new GoalResponse(
                 goal.getId(),
@@ -115,7 +115,7 @@ public class GoalService {
         return remainingAmount.divide(BigDecimal.valueOf(monthsRemaining), 2, RoundingMode.HALF_UP);
     }
 
-    private GoalStatus determineStatus(Goal goal, BigDecimal remainingAmount, BigDecimal requiredMonthlyContribution) {
+    private GoalStatus determineStatus(Goal goal, BigDecimal progressPercentage) {
         if (goal.getCurrentAmount().compareTo(goal.getTargetAmount()) >= 0) {
             return GoalStatus.COMPLETED;
         }
@@ -124,12 +124,18 @@ public class GoalService {
             return GoalStatus.OVERDUE;
         }
 
-        BigDecimal currentToRequiredRatio = requiredMonthlyContribution.compareTo(BigDecimal.ZERO) == 0
-                ? BigDecimal.ONE
-                : goal.getCurrentAmount()
-                .divide(goal.getTargetAmount(), 4, RoundingMode.HALF_UP);
+        LocalDate today = LocalDate.now();
+        LocalDate goalCreatedDate = goal.getCreatedAt() == null
+                ? today
+                : goal.getCreatedAt().atZone(java.time.ZoneOffset.UTC).toLocalDate();
+        long totalGoalDays = Math.max(1, ChronoUnit.DAYS.between(goalCreatedDate, goal.getTargetDate()));
+        long elapsedGoalDays = Math.max(0, ChronoUnit.DAYS.between(goalCreatedDate, today));
 
-        if (remainingAmount.compareTo(BigDecimal.ZERO) > 0 && currentToRequiredRatio.compareTo(BigDecimal.valueOf(0.5)) < 0) {
+        BigDecimal elapsedRatioPercentage = BigDecimal.valueOf(elapsedGoalDays)
+                .multiply(BigDecimal.valueOf(100))
+                .divide(BigDecimal.valueOf(totalGoalDays), 2, RoundingMode.HALF_UP);
+
+        if (progressPercentage.compareTo(elapsedRatioPercentage.subtract(BigDecimal.valueOf(15))) < 0) {
             return GoalStatus.AT_RISK;
         }
 
