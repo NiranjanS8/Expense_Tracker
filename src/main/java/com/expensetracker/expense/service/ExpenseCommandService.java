@@ -6,10 +6,13 @@ import com.expensetracker.common.exception.BadRequestException;
 import com.expensetracker.expense.dto.ExpenseRequest;
 import com.expensetracker.expense.dto.ExpenseResponse;
 import com.expensetracker.expense.entity.Expense;
+import com.expensetracker.expense.event.ExpenseChangeType;
+import com.expensetracker.expense.event.ExpenseChangedEvent;
 import com.expensetracker.expense.repository.ExpenseRepository;
 import com.expensetracker.smartcategory.service.SmartCategoryService;
 import com.expensetracker.user.entity.User;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +24,7 @@ public class ExpenseCommandService {
     private final CategoryService categoryService;
     private final SmartCategoryService smartCategoryService;
     private final ExpenseQueryService expenseQueryService;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     @Transactional
     public ExpenseResponse createExpense(ExpenseRequest request, User user) {
@@ -34,7 +38,9 @@ public class ExpenseCommandService {
         expense.setDescription(trimToNull(request.description()));
         expense.setPaymentMethod(request.paymentMethod());
 
-        return ExpenseResponse.from(expenseRepository.save(expense));
+        Expense savedExpense = expenseRepository.save(expense);
+        publishExpenseChanged(savedExpense, ExpenseChangeType.CREATED);
+        return ExpenseResponse.from(savedExpense);
     }
 
     @Transactional
@@ -48,6 +54,7 @@ public class ExpenseCommandService {
         expense.setDescription(trimToNull(request.description()));
         expense.setPaymentMethod(request.paymentMethod());
 
+        publishExpenseChanged(expense, ExpenseChangeType.UPDATED);
         return ExpenseResponse.from(expense);
     }
 
@@ -55,6 +62,7 @@ public class ExpenseCommandService {
     public void deleteExpense(Long expenseId, User user) {
         Expense expense = expenseQueryService.findUserExpense(expenseId, user.getId());
         expenseRepository.delete(expense);
+        publishExpenseChanged(expense, ExpenseChangeType.DELETED);
     }
 
     private Category resolveExpenseCategory(ExpenseRequest request, User user) {
@@ -75,5 +83,16 @@ public class ExpenseCommandService {
 
         String trimmedValue = value.trim();
         return trimmedValue.isEmpty() ? null : trimmedValue;
+    }
+
+    private void publishExpenseChanged(Expense expense, ExpenseChangeType changeType) {
+        applicationEventPublisher.publishEvent(new ExpenseChangedEvent(
+                expense.getId(),
+                expense.getUser().getId(),
+                expense.getCategory().getId(),
+                expense.getExpenseDate(),
+                expense.getAmount(),
+                changeType
+        ));
     }
 }
