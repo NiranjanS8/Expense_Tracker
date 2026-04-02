@@ -8,6 +8,7 @@ import com.expensetracker.email.dto.EmailReportPreferenceResponse;
 import com.expensetracker.email.dto.EmailReportSendResponse;
 import com.expensetracker.email.entity.EmailReportPreference;
 import com.expensetracker.email.repository.EmailReportPreferenceRepository;
+import com.expensetracker.job.service.JobLockService;
 import com.expensetracker.insights.dto.InsightItemResponse;
 import com.expensetracker.insights.dto.InsightsSummaryResponse;
 import com.expensetracker.insights.service.InsightsService;
@@ -26,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.YearMonth;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 
@@ -34,6 +36,8 @@ import java.util.Optional;
 public class EmailReportService {
 
     private static final Logger logger = LoggerFactory.getLogger(EmailReportService.class);
+    private static final String EMAIL_REPORT_JOB_LOCK = "email-report-scheduler";
+    private static final Duration EMAIL_REPORT_JOB_MAX_LOCK_DURATION = Duration.ofMinutes(30);
 
     private final EmailReportPreferenceRepository preferenceRepository;
     private final DashboardService dashboardService;
@@ -41,6 +45,7 @@ public class EmailReportService {
     private final EmailReportProperties emailReportProperties;
     private final UserRepository userRepository;
     private final Optional<JavaMailSender> javaMailSender;
+    private final JobLockService jobLockService;
 
     @Transactional(readOnly = true)
     public EmailReportPreferenceResponse getPreference(User user) {
@@ -69,12 +74,21 @@ public class EmailReportService {
     }
 
     @Scheduled(cron = "${app.email.reports.cron:0 0 9 1 * *}")
-    @Transactional(readOnly = true)
     public void sendScheduledReports() {
         if (!emailReportProperties.enabled()) {
             return;
         }
 
+        jobLockService.runWithLock(
+                EMAIL_REPORT_JOB_LOCK,
+                EMAIL_REPORT_JOB_MAX_LOCK_DURATION,
+                "email-job",
+                this::runScheduledReports
+        );
+    }
+
+    @Transactional(readOnly = true)
+    void runScheduledReports() {
         YearMonth reportMonth = YearMonth.now().minusMonths(1);
         for (EmailReportPreference preference : preferenceRepository.findAllByEnabledTrue()) {
             try {

@@ -5,6 +5,7 @@ import com.expensetracker.category.service.CategoryService;
 import com.expensetracker.common.exception.ResourceNotFoundException;
 import com.expensetracker.expense.entity.Expense;
 import com.expensetracker.expense.repository.ExpenseRepository;
+import com.expensetracker.job.service.JobLockService;
 import com.expensetracker.recurring.dto.RecurringExpenseRequest;
 import com.expensetracker.recurring.dto.RecurringExpenseResponse;
 import com.expensetracker.recurring.dto.RecurringGenerationResponse;
@@ -19,15 +20,20 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.Duration;
 import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 public class RecurringExpenseService {
 
+    private static final String RECURRING_JOB_LOCK = "recurring-expense-generation";
+    private static final Duration RECURRING_JOB_MAX_LOCK_DURATION = Duration.ofMinutes(10);
+
     private final RecurringExpenseRepository recurringExpenseRepository;
     private final ExpenseRepository expenseRepository;
     private final CategoryService categoryService;
+    private final JobLockService jobLockService;
 
     @Transactional(readOnly = true)
     public List<RecurringExpenseResponse> getRecurringExpenses(User user) {
@@ -97,11 +103,15 @@ public class RecurringExpenseService {
     }
 
     @Scheduled(cron = "${app.recurring.generation.cron:0 0 1 * * *}")
-    @Transactional
     public void generateScheduledRecurringExpenses() {
-        generateExpenses(
-                recurringExpenseRepository.findAllByActiveTrueAndNextExecutionDateLessThanEqual(LocalDate.now()),
-                LocalDate.now()
+        jobLockService.runWithLock(
+                RECURRING_JOB_LOCK,
+                RECURRING_JOB_MAX_LOCK_DURATION,
+                "recurring-job",
+                () -> generateExpenses(
+                        recurringExpenseRepository.findAllByActiveTrueAndNextExecutionDateLessThanEqual(LocalDate.now()),
+                        LocalDate.now()
+                )
         );
     }
 

@@ -9,6 +9,7 @@ import com.expensetracker.email.dto.EmailReportPreferenceResponse;
 import com.expensetracker.email.dto.EmailReportSendResponse;
 import com.expensetracker.email.entity.EmailReportPreference;
 import com.expensetracker.email.repository.EmailReportPreferenceRepository;
+import com.expensetracker.job.service.JobLockService;
 import com.expensetracker.insights.dto.InsightItemResponse;
 import com.expensetracker.insights.dto.InsightsSummaryResponse;
 import com.expensetracker.insights.service.InsightsService;
@@ -24,7 +25,6 @@ import java.util.Optional;
 import java.util.Properties;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mail.MailSendException;
@@ -58,6 +58,9 @@ class EmailReportServiceTest {
 
     @Mock
     private JavaMailSender javaMailSender;
+
+    @Mock
+    private JobLockService jobLockService;
 
     @Test
     void upsertPreferenceShouldNormalizeEmailAndPersistState() {
@@ -160,7 +163,8 @@ class EmailReportServiceTest {
                 insightsService,
                 emailReportProperties,
                 userRepository,
-                mailSender
+                mailSender,
+                jobLockService
         );
     }
 
