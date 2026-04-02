@@ -2,7 +2,8 @@ package com.expensetracker.goals.controller;
 
 import com.expensetracker.goals.dto.GoalRequest;
 import com.expensetracker.goals.dto.GoalResponse;
-import com.expensetracker.goals.service.GoalService;
+import com.expensetracker.goals.service.GoalCommandService;
+import com.expensetracker.goals.service.GoalQueryService;
 import com.expensetracker.user.entity.User;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -25,16 +26,17 @@ import java.util.List;
 @RequiredArgsConstructor
 public class GoalController {
 
-    private final GoalService goalService;
+    private final GoalQueryService goalQueryService;
+    private final GoalCommandService goalCommandService;
 
     @GetMapping
     public List<GoalResponse> getGoals(@AuthenticationPrincipal User user) {
-        return goalService.getGoals(user);
+        return goalQueryService.getGoals(user);
     }
 
     @GetMapping("/{goalId}")
     public GoalResponse getGoal(@PathVariable Long goalId, @AuthenticationPrincipal User user) {
-        return goalService.getGoal(goalId, user);
+        return goalQueryService.getGoal(goalId, user);
     }
 
     @PostMapping
@@ -43,7 +45,7 @@ public class GoalController {
             @Valid @RequestBody GoalRequest request,
             @AuthenticationPrincipal User user
     ) {
-        return goalService.createGoal(request, user);
+        return goalCommandService.createGoal(request, user);
     }
 
     @PutMapping("/{goalId}")
@@ -52,12 +54,12 @@ public class GoalController {
             @Valid @RequestBody GoalRequest request,
             @AuthenticationPrincipal User user
     ) {
-        return goalService.updateGoal(goalId, request, user);
+        return goalCommandService.updateGoal(goalId, request, user);
     }
 
     @DeleteMapping("/{goalId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteGoal(@PathVariable Long goalId, @AuthenticationPrincipal User user) {
-        goalService.deleteGoal(goalId, user);
+        goalCommandService.deleteGoal(goalId, user);
     }
 }

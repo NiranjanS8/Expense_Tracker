@@ -1,26 +1,24 @@
 package com.expensetracker.goals.service;
 
-import com.expensetracker.common.exception.BadRequestException;
 import com.expensetracker.common.exception.ResourceNotFoundException;
-import com.expensetracker.goals.dto.GoalRequest;
 import com.expensetracker.goals.dto.GoalResponse;
 import com.expensetracker.goals.dto.GoalStatus;
 import com.expensetracker.goals.entity.Goal;
 import com.expensetracker.goals.repository.GoalRepository;
 import com.expensetracker.user.entity.User;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
-import java.util.List;
-
 @Service
 @RequiredArgsConstructor
-public class GoalService {
+public class GoalQueryService {
 
     private final GoalRepository goalRepository;
 
@@ -37,44 +35,14 @@ public class GoalService {
         return toResponse(findGoal(goalId, user.getId()));
     }
 
-    @Transactional
-    public GoalResponse createGoal(GoalRequest request, User user) {
-        validateGoalAmounts(request.currentAmount(), request.targetAmount());
-
-        Goal goal = new Goal();
-        goal.setUser(user);
-        goal.setName(request.name().trim());
-        goal.setTargetAmount(request.targetAmount());
-        goal.setCurrentAmount(request.currentAmount());
-        goal.setTargetDate(request.targetDate());
-
-        return toResponse(goalRepository.save(goal));
-    }
-
-    @Transactional
-    public GoalResponse updateGoal(Long goalId, GoalRequest request, User user) {
-        validateGoalAmounts(request.currentAmount(), request.targetAmount());
-
-        Goal goal = findGoal(goalId, user.getId());
-        goal.setName(request.name().trim());
-        goal.setTargetAmount(request.targetAmount());
-        goal.setCurrentAmount(request.currentAmount());
-        goal.setTargetDate(request.targetDate());
-
-        return toResponse(goal);
-    }
-
-    @Transactional
-    public void deleteGoal(Long goalId, User user) {
-        goalRepository.delete(findGoal(goalId, user.getId()));
-    }
-
-    private Goal findGoal(Long goalId, Long userId) {
+    @Transactional(readOnly = true)
+    public Goal findGoal(Long goalId, Long userId) {
         return goalRepository.findByIdAndUserId(goalId, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Goal not found"));
     }
 
-    private GoalResponse toResponse(Goal goal) {
+    @Transactional(readOnly = true)
+    public GoalResponse toResponse(Goal goal) {
         BigDecimal remainingAmount = goal.getTargetAmount().subtract(goal.getCurrentAmount()).max(BigDecimal.ZERO);
         BigDecimal progressPercentage = calculateProgress(goal.getCurrentAmount(), goal.getTargetAmount());
         BigDecimal requiredMonthlyContribution = calculateRequiredMonthlyContribution(remainingAmount, goal.getTargetDate());
@@ -127,7 +95,7 @@ public class GoalService {
         LocalDate today = LocalDate.now();
         LocalDate goalCreatedDate = goal.getCreatedAt() == null
                 ? today
-                : goal.getCreatedAt().atZone(java.time.ZoneOffset.UTC).toLocalDate();
+                : goal.getCreatedAt().atZone(ZoneOffset.UTC).toLocalDate();
         long totalGoalDays = Math.max(1, ChronoUnit.DAYS.between(goalCreatedDate, goal.getTargetDate()));
         long elapsedGoalDays = Math.max(0, ChronoUnit.DAYS.between(goalCreatedDate, today));
 
@@ -140,11 +108,5 @@ public class GoalService {
         }
 
         return GoalStatus.ON_TRACK;
-    }
-
-    private void validateGoalAmounts(BigDecimal currentAmount, BigDecimal targetAmount) {
-        if (currentAmount.compareTo(targetAmount) > 0) {
-            throw new BadRequestException("Current amount cannot be greater than target amount");
-        }
     }
 }

@@ -3,7 +3,6 @@ package com.expensetracker.budget.service;
 import com.expensetracker.budget.config.BudgetAlertProperties;
 import com.expensetracker.budget.dto.BudgetAlertLevel;
 import com.expensetracker.budget.dto.BudgetQueryParams;
-import com.expensetracker.budget.dto.BudgetRequest;
 import com.expensetracker.budget.dto.BudgetStatus;
 import com.expensetracker.budget.dto.BudgetSummaryResponse;
 import com.expensetracker.budget.entity.Budget;
@@ -24,43 +23,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
-public class BudgetService {
+public class BudgetQueryService {
 
     private final BudgetRepository budgetRepository;
     private final ExpenseRepository expenseRepository;
     private final BudgetAlertProperties budgetAlertProperties;
-
-    @Transactional
-    public BudgetSummaryResponse createBudget(BudgetRequest request, User user) {
-        YearMonth budgetMonth = parseBudgetMonth(request.budgetMonth());
-        validateBudgetMonth(budgetMonth);
-        if (hasBudgetForMonth(user.getId(), budgetMonth)) {
-            throw new BadRequestException("Budget already exists for the given month");
-        }
-
-        Budget budget = new Budget();
-        budget.setUser(user);
-        budget.setAmount(request.amount());
-        budget.setBudgetMonth(budgetMonth);
-
-        return toBudgetResponse(budgetRepository.save(budget));
-    }
-
-    @Transactional
-    public BudgetSummaryResponse updateBudget(String budgetMonthValue, BudgetRequest request, User user) {
-        YearMonth budgetMonth = parseBudgetMonth(budgetMonthValue);
-        YearMonth requestBudgetMonth = parseBudgetMonth(request.budgetMonth());
-        validateBudgetMonth(budgetMonth);
-        validateBudgetMonth(requestBudgetMonth);
-        if (!budgetMonth.equals(requestBudgetMonth)) {
-            throw new BadRequestException("Path month and request budgetMonth must match");
-        }
-
-        Budget budget = findBudgetByMonth(user.getId(), budgetMonth);
-        budget.setAmount(request.amount());
-
-        return toBudgetResponse(budget);
-    }
 
     @Transactional(readOnly = true)
     public BudgetSummaryResponse getBudgetByMonth(String budgetMonthValue, User user) {
@@ -108,7 +75,8 @@ public class BudgetService {
                 .toList();
     }
 
-    private Budget findBudgetByMonth(Long userId, YearMonth budgetMonth) {
+    @Transactional(readOnly = true)
+    public Budget findBudgetByMonth(Long userId, YearMonth budgetMonth) {
         return budgetRepository.findAllByUserIdOrderByBudgetMonthDesc(userId)
                 .stream()
                 .filter(budget -> budget.getBudgetMonth().equals(budgetMonth))
@@ -116,7 +84,15 @@ public class BudgetService {
                 .orElseThrow(() -> new ResourceNotFoundException("Budget not found for the given month"));
     }
 
-    private BudgetSummaryResponse toBudgetResponse(Budget budget) {
+    @Transactional(readOnly = true)
+    public boolean hasBudgetForMonth(Long userId, YearMonth budgetMonth) {
+        return budgetRepository.findAllByUserIdOrderByBudgetMonthDesc(userId)
+                .stream()
+                .anyMatch(budget -> budget.getBudgetMonth().equals(budgetMonth));
+    }
+
+    @Transactional(readOnly = true)
+    public BudgetSummaryResponse toBudgetResponse(Budget budget) {
         BigDecimal spentAmount = expenseRepository.sumAmountByUserIdAndExpenseDateBetween(
                 budget.getUser().getId(),
                 budget.getBudgetMonth().atDay(1),
@@ -130,7 +106,7 @@ public class BudgetService {
         List<Integer> triggeredThresholds = resolveTriggeredThresholds(usagePercentage);
         BudgetStatus status = resolveStatus(overBudgetAmount, triggeredThresholds);
         BudgetAlertLevel alertLevel = resolveAlertLevel(status);
-        String alertMessage = buildAlertMessage(status, budgetAmount, usagePercentage, triggeredThresholds);
+        String alertMessage = buildAlertMessage(status, usagePercentage, triggeredThresholds);
 
         return BudgetSummaryResponse.from(
                 budget,
@@ -143,6 +119,23 @@ public class BudgetService {
                 alertMessage,
                 triggeredThresholds
         );
+    }
+
+    public YearMonth parseBudgetMonth(String budgetMonth) {
+        try {
+            return YearMonth.parse(budgetMonth);
+        } catch (RuntimeException exception) {
+            throw new BadRequestException("Budget month must be in yyyy-MM format");
+        }
+    }
+
+    public void validateBudgetMonth(YearMonth budgetMonth) {
+        YearMonth earliestSupportedMonth = YearMonth.of(2000, 1);
+        YearMonth latestSupportedMonth = YearMonth.of(2100, 12);
+
+        if (budgetMonth.isBefore(earliestSupportedMonth) || budgetMonth.isAfter(latestSupportedMonth)) {
+            throw new BadRequestException("budgetMonth must be between 2000-01 and 2100-12");
+        }
     }
 
     private BigDecimal calculateUsagePercentage(BigDecimal spentAmount, BigDecimal budgetAmount) {
@@ -165,8 +158,7 @@ public class BudgetService {
             return List.of();
         }
 
-        return thresholds
-                .stream()
+        return thresholds.stream()
                 .filter(Objects::nonNull)
                 .filter(threshold -> threshold > 0)
                 .filter(threshold -> usagePercentage.compareTo(BigDecimal.valueOf(threshold)) >= 0)
@@ -198,7 +190,6 @@ public class BudgetService {
 
     private String buildAlertMessage(
             BudgetStatus status,
-            BigDecimal budgetAmount,
             BigDecimal usagePercentage,
             List<Integer> triggeredThresholds
     ) {
@@ -220,28 +211,5 @@ public class BudgetService {
 
     private boolean hasTriggeredThreshold(List<Integer> triggeredThresholds, int minimumThreshold) {
         return triggeredThresholds.stream().anyMatch(threshold -> threshold >= minimumThreshold);
-    }
-
-    private void validateBudgetMonth(YearMonth budgetMonth) {
-        YearMonth earliestSupportedMonth = YearMonth.of(2000, 1);
-        YearMonth latestSupportedMonth = YearMonth.of(2100, 12);
-
-        if (budgetMonth.isBefore(earliestSupportedMonth) || budgetMonth.isAfter(latestSupportedMonth)) {
-            throw new BadRequestException("budgetMonth must be between 2000-01 and 2100-12");
-        }
-    }
-
-    private boolean hasBudgetForMonth(Long userId, YearMonth budgetMonth) {
-        return budgetRepository.findAllByUserIdOrderByBudgetMonthDesc(userId)
-                .stream()
-                .anyMatch(budget -> budget.getBudgetMonth().equals(budgetMonth));
-    }
-
-    private YearMonth parseBudgetMonth(String budgetMonth) {
-        try {
-            return YearMonth.parse(budgetMonth);
-        } catch (RuntimeException exception) {
-            throw new BadRequestException("Budget month must be in yyyy-MM format");
-        }
     }
 }

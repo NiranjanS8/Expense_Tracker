@@ -2,7 +2,7 @@ package com.expensetracker.export.service;
 
 import com.expensetracker.expense.dto.ExpenseQueryParams;
 import com.expensetracker.expense.dto.ExpenseResponse;
-import com.expensetracker.expense.service.ExpenseService;
+import com.expensetracker.expense.service.ExpenseQueryService;
 import com.expensetracker.user.entity.User;
 import com.lowagie.text.Document;
 import com.lowagie.text.DocumentException;
@@ -23,14 +23,14 @@ import java.util.List;
 @Service
 public class ExpenseExportService {
 
-    private final ExpenseService expenseService;
+    private final ExpenseQueryService expenseQueryService;
 
-    public ExpenseExportService(ExpenseService expenseService) {
-        this.expenseService = expenseService;
+    public ExpenseExportService(ExpenseQueryService expenseQueryService) {
+        this.expenseQueryService = expenseQueryService;
     }
 
     public byte[] exportExpensesAsCsv(User user, ExpenseQueryParams queryParams) {
-        List<ExpenseResponse> expenses = expenseService.getExpensesForExport(user, queryParams);
+        List<ExpenseResponse> expenses = expenseQueryService.getExpensesForExport(user, queryParams);
 
         StringBuilder csvBuilder = new StringBuilder();
         csvBuilder.append("Id,Date,Category,Amount,Payment Method,Description").append('\n');
@@ -49,7 +49,7 @@ public class ExpenseExportService {
     }
 
     public byte[] exportExpensesAsPdf(User user, ExpenseQueryParams queryParams) {
-        List<ExpenseResponse> expenses = expenseService.getExpensesForExport(user, queryParams);
+        List<ExpenseResponse> expenses = expenseQueryService.getExpensesForExport(user, queryParams);
         BigDecimal totalAmount = expenses.stream()
                 .map(ExpenseResponse::amount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);

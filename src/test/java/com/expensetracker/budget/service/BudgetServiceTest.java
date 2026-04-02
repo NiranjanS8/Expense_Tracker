@@ -16,7 +16,7 @@ import java.time.YearMonth;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
+import org.junit.jupiter.api.BeforeEach;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -40,8 +40,14 @@ class BudgetServiceTest {
     @Mock
     private BudgetAlertProperties budgetAlertProperties;
 
-    @InjectMocks
-    private BudgetService budgetService;
+    private BudgetQueryService budgetQueryService;
+    private BudgetCommandService budgetCommandService;
+
+    @BeforeEach
+    void setUp() {
+        budgetQueryService = new BudgetQueryService(budgetRepository, expenseRepository, budgetAlertProperties);
+        budgetCommandService = new BudgetCommandService(budgetRepository, budgetQueryService);
+    }
 
     @Test
     void createBudgetShouldReturnCalculatedCriticalSummary() {
@@ -58,7 +64,7 @@ class BudgetServiceTest {
         )).thenReturn(new BigDecimal("900.00"));
         when(budgetAlertProperties.thresholds()).thenReturn(List.of(80, 90, 100));
 
-        BudgetSummaryResponse response = budgetService.createBudget(request, user);
+        BudgetSummaryResponse response = budgetCommandService.createBudget(request, user);
 
         assertEquals(new BigDecimal("1000.00"), response.budgetAmount());
         assertEquals("2026-04", response.budgetMonth());
@@ -79,7 +85,7 @@ class BudgetServiceTest {
 
         BadRequestException exception = assertThrows(
                 BadRequestException.class,
-                () -> budgetService.createBudget(new BudgetRequest(new BigDecimal("1000.00"), "2026-04"), user)
+                () -> budgetCommandService.createBudget(new BudgetRequest(new BigDecimal("1000.00"), "2026-04"), user)
         );
 
         assertEquals("Budget already exists for the given month", exception.getMessage());
@@ -92,7 +98,7 @@ class BudgetServiceTest {
 
         when(budgetRepository.findAllByUserIdOrderByBudgetMonthDesc(user.getId())).thenReturn(List.of());
 
-        BudgetSummaryResponse response = budgetService.getCurrentMonthBudget(user);
+        BudgetSummaryResponse response = budgetQueryService.getCurrentMonthBudget(user);
 
         assertEquals(currentMonth.toString(), response.budgetMonth());
         assertEquals(BigDecimal.ZERO, response.budgetAmount());

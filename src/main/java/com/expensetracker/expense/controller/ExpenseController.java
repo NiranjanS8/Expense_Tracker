@@ -4,7 +4,8 @@ import com.expensetracker.common.dto.PagedResponse;
 import com.expensetracker.expense.dto.ExpenseQueryParams;
 import com.expensetracker.expense.dto.ExpenseRequest;
 import com.expensetracker.expense.dto.ExpenseResponse;
-import com.expensetracker.expense.service.ExpenseService;
+import com.expensetracker.expense.service.ExpenseCommandService;
+import com.expensetracker.expense.service.ExpenseQueryService;
 import com.expensetracker.user.entity.User;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
@@ -34,7 +35,8 @@ import org.springframework.validation.annotation.Validated;
 @RequiredArgsConstructor
 public class ExpenseController {
 
-    private final ExpenseService expenseService;
+    private final ExpenseQueryService expenseQueryService;
+    private final ExpenseCommandService expenseCommandService;
 
     @GetMapping
     public PagedResponse<ExpenseResponse> getExpenses(
@@ -65,7 +67,7 @@ public class ExpenseController {
                 minAmount,
                 maxAmount
         );
-        return expenseService.getExpenses(user, queryParams);
+        return expenseQueryService.getExpenses(user, queryParams);
     }
 
     @GetMapping("/{expenseId}")
@@ -73,7 +75,7 @@ public class ExpenseController {
             @PathVariable Long expenseId,
             @AuthenticationPrincipal User user
     ) {
-        return expenseService.getExpenseById(expenseId, user);
+        return expenseQueryService.getExpenseById(expenseId, user);
     }
 
     @PostMapping
@@ -82,7 +84,7 @@ public class ExpenseController {
             @Valid @RequestBody ExpenseRequest request,
             @AuthenticationPrincipal User user
     ) {
-        return expenseService.createExpense(request, user);
+        return expenseCommandService.createExpense(request, user);
     }
 
     @PutMapping("/{expenseId}")
@@ -91,7 +93,7 @@ public class ExpenseController {
             @Valid @RequestBody ExpenseRequest request,
             @AuthenticationPrincipal User user
     ) {
-        return expenseService.updateExpense(expenseId, request, user);
+        return expenseCommandService.updateExpense(expenseId, request, user);
     }
 
     @DeleteMapping("/{expenseId}")
@@ -100,6 +102,6 @@ public class ExpenseController {
             @PathVariable Long expenseId,
             @AuthenticationPrincipal User user
     ) {
-        expenseService.deleteExpense(expenseId, user);
+        expenseCommandService.deleteExpense(expenseId, user);
     }
 }
