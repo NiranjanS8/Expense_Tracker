@@ -12,6 +12,7 @@ import com.expensetracker.job.service.JobLockService;
 import com.expensetracker.insights.dto.InsightItemResponse;
 import com.expensetracker.insights.dto.InsightsSummaryResponse;
 import com.expensetracker.insights.service.InsightsService;
+import com.expensetracker.observability.ObservabilityMetricsService;
 import com.expensetracker.user.entity.User;
 import com.expensetracker.user.repository.UserRepository;
 import jakarta.mail.MessagingException;
@@ -46,6 +47,7 @@ public class EmailReportService {
     private final UserRepository userRepository;
     private final Optional<JavaMailSender> javaMailSender;
     private final JobLockService jobLockService;
+    private final ObservabilityMetricsService observabilityMetricsService;
 
     @Transactional(readOnly = true)
     public EmailReportPreferenceResponse getPreference(User user) {
@@ -70,7 +72,7 @@ public class EmailReportService {
 
     @Transactional(readOnly = true)
     public EmailReportSendResponse sendManualReport(User user, YearMonth month) {
-        return sendReport(user, resolveMonth(month));
+        return sendReport(user, resolveMonth(month), "manual");
     }
 
     @Scheduled(cron = "${app.email.reports.cron:0 0 9 1 * *}")
@@ -90,21 +92,53 @@ public class EmailReportService {
     @Transactional(readOnly = true)
     void runScheduledReports() {
         YearMonth reportMonth = YearMonth.now().minusMonths(1);
+        int processed = 0;
+        int sent = 0;
+        int skipped = 0;
+        int failed = 0;
+        long startTime = System.nanoTime();
+
         for (EmailReportPreference preference : preferenceRepository.findAllByEnabledTrue()) {
             try {
-                userRepository.findById(preference.getUser().getId())
-                        .ifPresent(user -> sendReport(user, reportMonth));
+                processed++;
+                Optional<User> userOptional = userRepository.findById(preference.getUser().getId());
+                if (userOptional.isPresent()) {
+                    EmailReportSendResponse response = sendReport(userOptional.orElseThrow(), reportMonth, "scheduled");
+                    if (response.sent()) {
+                        sent++;
+                    } else if ("Failed to send email report.".equals(response.message())) {
+                        failed++;
+                    } else {
+                        skipped++;
+                    }
+                } else {
+                    skipped++;
+                }
             } catch (RuntimeException exception) {
-                logger.error("Failed to process scheduled report for preference {}", preference.getId(), exception);
+                failed++;
+                logger.error("event=email_report_scheduled_failure preferenceId={} month={} error={}",
+                        preference.getId(), reportMonth, exception.getMessage(), exception);
             }
         }
+
+        logger.info(
+                "event=email_report_batch_completed month={} processed={} sent={} skipped={} failed={} durationMs={}",
+                reportMonth,
+                processed,
+                sent,
+                skipped,
+                failed,
+                (System.nanoTime() - startTime) / 1_000_000
+        );
     }
 
-    private EmailReportSendResponse sendReport(User user, YearMonth month) {
+    private EmailReportSendResponse sendReport(User user, YearMonth month, String trigger) {
+        long startTime = System.nanoTime();
         EmailReportPreference preference = preferenceRepository.findByUserId(user.getId())
                 .orElse(null);
 
         if (preference == null || !preference.isEnabled()) {
+            observabilityMetricsService.recordEmailSend(trigger, "disabled", System.nanoTime() - startTime);
             return new EmailReportSendResponse(
                     user.getEmail(),
                     month,
@@ -117,7 +151,14 @@ public class EmailReportService {
         String body = buildEmailBody(user, month);
 
         if (javaMailSender.isEmpty()) {
-            logger.info("Email sender not configured. Report for {} and {} was generated but not sent.", user.getEmail(), month);
+            observabilityMetricsService.recordEmailSend(trigger, "logged_only", System.nanoTime() - startTime);
+            logger.info(
+                    "event=email_report_logged_only trigger={} userId={} email={} month={}",
+                    trigger,
+                    user.getId(),
+                    user.getEmail(),
+                    month
+            );
             logger.info(body);
             return new EmailReportSendResponse(
                     preference.getEmail(),
@@ -135,10 +176,28 @@ public class EmailReportService {
             helper.setSubject(subject);
             helper.setText(body, false);
             javaMailSender.get().send(mimeMessage);
+            observabilityMetricsService.recordEmailSend(trigger, "success", System.nanoTime() - startTime);
+            logger.info(
+                    "event=email_report_sent trigger={} userId={} email={} month={} durationMs={}",
+                    trigger,
+                    user.getId(),
+                    preference.getEmail(),
+                    month,
+                    (System.nanoTime() - startTime) / 1_000_000
+            );
 
             return new EmailReportSendResponse(preference.getEmail(), month, true, "Email report sent successfully.");
         } catch (MessagingException | MailException exception) {
-            logger.error("Failed to send email report to {}", preference.getEmail(), exception);
+            observabilityMetricsService.recordEmailSend(trigger, "failure", System.nanoTime() - startTime);
+            logger.error(
+                    "event=email_report_failed trigger={} userId={} email={} month={} error={}",
+                    trigger,
+                    user.getId(),
+                    preference.getEmail(),
+                    month,
+                    exception.getMessage(),
+                    exception
+            );
             return new EmailReportSendResponse(
                     preference.getEmail(),
                     month,

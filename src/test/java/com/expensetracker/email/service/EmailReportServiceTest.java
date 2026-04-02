@@ -13,6 +13,7 @@ import com.expensetracker.job.service.JobLockService;
 import com.expensetracker.insights.dto.InsightItemResponse;
 import com.expensetracker.insights.dto.InsightsSummaryResponse;
 import com.expensetracker.insights.service.InsightsService;
+import com.expensetracker.observability.ObservabilityMetricsService;
 import com.expensetracker.user.entity.Role;
 import com.expensetracker.user.entity.User;
 import com.expensetracker.user.repository.UserRepository;
@@ -34,7 +35,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -61,6 +61,9 @@ class EmailReportServiceTest {
 
     @Mock
     private JobLockService jobLockService;
+
+    @Mock
+    private ObservabilityMetricsService observabilityMetricsService;
 
     @Test
     void upsertPreferenceShouldNormalizeEmailAndPersistState() {
@@ -164,7 +167,8 @@ class EmailReportServiceTest {
                 emailReportProperties,
                 userRepository,
                 mailSender,
-                jobLockService
+                jobLockService,
+                observabilityMetricsService
         );
     }
 

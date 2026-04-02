@@ -10,6 +10,7 @@ import com.expensetracker.export.entity.ExpenseExportJob;
 import com.expensetracker.export.entity.ExpenseExportJobStatus;
 import com.expensetracker.export.repository.ExpenseExportJobRepository;
 import com.expensetracker.job.service.JobLockService;
+import com.expensetracker.observability.ObservabilityMetricsService;
 import com.expensetracker.user.entity.User;
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
@@ -39,6 +40,7 @@ public class ExpenseExportJobService {
     private final ExpenseExportService expenseExportService;
     private final ExportJobProperties exportJobProperties;
     private final JobLockService jobLockService;
+    private final ObservabilityMetricsService observabilityMetricsService;
 
     private Path storageDirectory;
 
@@ -67,7 +69,16 @@ public class ExpenseExportJobService {
         job.setMinAmount(request.minAmount());
         job.setMaxAmount(request.maxAmount());
 
-        return ExpenseExportJobResponse.from(expenseExportJobRepository.save(job));
+        ExpenseExportJob savedJob = expenseExportJobRepository.save(job);
+        observabilityMetricsService.incrementExportJobCreated(savedJob.getType().name().toLowerCase());
+        logger.info(
+                "event=export_job_created jobId={} userId={} type={} status={}",
+                savedJob.getId(),
+                user.getId(),
+                savedJob.getType(),
+                savedJob.getStatus()
+        );
+        return ExpenseExportJobResponse.from(savedJob);
     }
 
     @Transactional(readOnly = true)
@@ -124,10 +135,11 @@ public class ExpenseExportJobService {
             return;
         }
 
-        logger.info("Processing {} pending expense export job(s).", pendingJobs.size());
+        logger.info("event=export_job_batch_started pendingJobs={}", pendingJobs.size());
         for (ExpenseExportJob pendingJob : pendingJobs) {
             processSingleJob(pendingJob.getId());
         }
+        logger.info("event=export_job_batch_completed pendingJobs={}", pendingJobs.size());
     }
 
     @Transactional
@@ -139,10 +151,17 @@ public class ExpenseExportJobService {
             return;
         }
 
+        long startTime = System.nanoTime();
         job.setStatus(ExpenseExportJobStatus.PROCESSING);
         job.setStartedAt(Instant.now());
         job.setErrorMessage(null);
         expenseExportJobRepository.save(job);
+        logger.info(
+                "event=export_job_started jobId={} userId={} type={}",
+                job.getId(),
+                job.getUser().getId(),
+                job.getType()
+        );
 
         try {
             byte[] exportBytes = expenseExportService.exportExpenses(
@@ -178,13 +197,41 @@ public class ExpenseExportJobService {
             job.setCompletedAt(Instant.now());
             expenseExportJobRepository.save(job);
 
-            logger.info("Completed expense export job {} for user {}.", job.getId(), job.getUser().getId());
+            observabilityMetricsService.recordExportJobProcessed(
+                    job.getType().name().toLowerCase(),
+                    "success",
+                    System.nanoTime() - startTime,
+                    exportBytes.length
+            );
+            logger.info(
+                    "event=export_job_completed jobId={} userId={} type={} fileName={} fileSizeBytes={} durationMs={}",
+                    job.getId(),
+                    job.getUser().getId(),
+                    job.getType(),
+                    job.getFileName(),
+                    exportBytes.length,
+                    (System.nanoTime() - startTime) / 1_000_000
+            );
         } catch (Exception exception) {
-            logger.error("Failed to process expense export job {}", job.getId(), exception);
+            observabilityMetricsService.recordExportJobProcessed(
+                    job.getType().name().toLowerCase(),
+                    "failure",
+                    System.nanoTime() - startTime,
+                    -1
+            );
             job.setStatus(ExpenseExportJobStatus.FAILED);
             job.setErrorMessage(exception.getMessage());
             job.setCompletedAt(Instant.now());
             expenseExportJobRepository.save(job);
+            logger.error(
+                    "event=export_job_failed jobId={} userId={} type={} durationMs={} error={}",
+                    job.getId(),
+                    job.getUser().getId(),
+                    job.getType(),
+                    (System.nanoTime() - startTime) / 1_000_000,
+                    exception.getMessage(),
+                    exception
+            );
         }
     }
 

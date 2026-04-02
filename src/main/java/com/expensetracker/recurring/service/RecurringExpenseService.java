@@ -6,6 +6,7 @@ import com.expensetracker.common.exception.ResourceNotFoundException;
 import com.expensetracker.expense.entity.Expense;
 import com.expensetracker.expense.repository.ExpenseRepository;
 import com.expensetracker.job.service.JobLockService;
+import com.expensetracker.observability.ObservabilityMetricsService;
 import com.expensetracker.recurring.dto.RecurringExpenseRequest;
 import com.expensetracker.recurring.dto.RecurringExpenseResponse;
 import com.expensetracker.recurring.dto.RecurringGenerationResponse;
@@ -18,6 +19,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.LocalDate;
 import java.time.Duration;
@@ -27,6 +30,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class RecurringExpenseService {
 
+    private static final Logger logger = LoggerFactory.getLogger(RecurringExpenseService.class);
     private static final String RECURRING_JOB_LOCK = "recurring-expense-generation";
     private static final Duration RECURRING_JOB_MAX_LOCK_DURATION = Duration.ofMinutes(10);
 
@@ -34,6 +38,7 @@ public class RecurringExpenseService {
     private final ExpenseRepository expenseRepository;
     private final CategoryService categoryService;
     private final JobLockService jobLockService;
+    private final ObservabilityMetricsService observabilityMetricsService;
 
     @Transactional(readOnly = true)
     public List<RecurringExpenseResponse> getRecurringExpenses(User user) {
@@ -98,7 +103,7 @@ public class RecurringExpenseService {
                 .filter(expense -> !expense.getNextExecutionDate().isAfter(runDate))
                 .toList();
 
-        int generatedExpenses = generateExpenses(recurringExpenses, runDate);
+        int generatedExpenses = generateExpensesWithObservability(recurringExpenses, runDate, "manual", user.getId());
         return new RecurringGenerationResponse(runDate, recurringExpenses.size(), generatedExpenses);
     }
 
@@ -108,11 +113,45 @@ public class RecurringExpenseService {
                 RECURRING_JOB_LOCK,
                 RECURRING_JOB_MAX_LOCK_DURATION,
                 "recurring-job",
-                () -> generateExpenses(
-                        recurringExpenseRepository.findAllByActiveTrueAndNextExecutionDateLessThanEqual(LocalDate.now()),
-                        LocalDate.now()
-                )
+                () -> {
+                    LocalDate runDate = LocalDate.now();
+                    generateExpensesWithObservability(
+                            recurringExpenseRepository.findAllByActiveTrueAndNextExecutionDateLessThanEqual(runDate),
+                            runDate,
+                            "scheduled",
+                            null
+                    );
+                }
         );
+    }
+
+    private int generateExpensesWithObservability(
+            List<RecurringExpense> recurringExpenses,
+            LocalDate runDate,
+            String trigger,
+            Long userId
+    ) {
+        long startTime = System.nanoTime();
+        int generatedExpenses = generateExpenses(recurringExpenses, runDate);
+        long durationNanos = System.nanoTime() - startTime;
+        long durationMs = durationNanos / 1_000_000;
+
+        observabilityMetricsService.recordRecurringRun(
+                trigger,
+                recurringExpenses.size(),
+                generatedExpenses,
+                durationNanos
+        );
+        logger.info(
+                "event=recurring_generation_completed trigger={} userId={} runDate={} processedRules={} generatedExpenses={} durationMs={}",
+                trigger,
+                userId,
+                runDate,
+                recurringExpenses.size(),
+                generatedExpenses,
+                durationMs
+        );
+        return generatedExpenses;
     }
 
     private int generateExpenses(List<RecurringExpense> recurringExpenses, LocalDate runDate) {
