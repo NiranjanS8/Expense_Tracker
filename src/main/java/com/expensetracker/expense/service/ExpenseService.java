@@ -29,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class ExpenseService {
 
+    private static final int MAX_EXPORT_ROWS = 5000;
     private static final Map<String, String> SORT_FIELDS = Map.of(
             "expenseDate", "expenseDate",
             "amount", "amount",
@@ -69,8 +70,12 @@ public class ExpenseService {
 
         Sort sort = buildSort(queryParams.sortBy(), queryParams.sortDir());
         Specification<Expense> specification = buildSpecification(user.getId(), queryParams);
+        long matchingExpenseCount = expenseRepository.count(specification);
+        if (matchingExpenseCount > MAX_EXPORT_ROWS) {
+            throw new BadRequestException("Export is limited to 5000 expenses. Narrow the filters and try again.");
+        }
 
-        return expenseRepository.findAll(specification, sort)
+        return expenseRepository.findAll(specification, PageRequest.of(0, MAX_EXPORT_ROWS, sort))
                 .stream()
                 .map(ExpenseResponse::from)
                 .toList();

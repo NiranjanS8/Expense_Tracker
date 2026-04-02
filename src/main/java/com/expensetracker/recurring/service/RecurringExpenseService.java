@@ -58,6 +58,8 @@ public class RecurringExpenseService {
     public RecurringExpenseResponse updateRecurringExpense(Long recurringExpenseId, RecurringExpenseRequest request, User user) {
         RecurringExpense recurringExpense = findRecurringExpense(recurringExpenseId, user.getId());
         Category category = categoryService.getAccessibleCategory(request.categoryId(), user.getId());
+        boolean scheduleChanged = !recurringExpense.getStartDate().equals(request.startDate())
+                || recurringExpense.getFrequency() != request.frequency();
 
         recurringExpense.setCategory(category);
         recurringExpense.setAmount(request.amount());
@@ -65,7 +67,9 @@ public class RecurringExpenseService {
         recurringExpense.setDescription(trimToNull(request.description()));
         recurringExpense.setPaymentMethod(request.paymentMethod());
         recurringExpense.setFrequency(request.frequency());
-        if (recurringExpense.getNextExecutionDate().isBefore(request.startDate())) {
+        if (scheduleChanged) {
+            recurringExpense.setNextExecutionDate(resolveNextExecutionDate(request.startDate(), request.frequency(), LocalDate.now()));
+        } else if (recurringExpense.getNextExecutionDate().isBefore(request.startDate())) {
             recurringExpense.setNextExecutionDate(request.startDate());
         }
 
@@ -136,6 +140,14 @@ public class RecurringExpenseService {
             case WEEKLY -> currentDate.plusWeeks(1);
             case MONTHLY -> currentDate.plusMonths(1);
         };
+    }
+
+    private LocalDate resolveNextExecutionDate(LocalDate startDate, RecurringFrequency frequency, LocalDate referenceDate) {
+        LocalDate nextDate = startDate;
+        while (nextDate.isBefore(referenceDate)) {
+            nextDate = nextExecutionDate(nextDate, frequency);
+        }
+        return nextDate;
     }
 
     private RecurringExpense findRecurringExpense(Long recurringExpenseId, Long userId) {
