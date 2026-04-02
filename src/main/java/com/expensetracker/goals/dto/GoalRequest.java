@@ -1,7 +1,7 @@
 package com.expensetracker.goals.dto;
 
 import jakarta.validation.constraints.DecimalMin;
-import jakarta.validation.constraints.Future;
+import jakarta.validation.constraints.FutureOrPresent;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -23,7 +23,7 @@ public record GoalRequest(
         BigDecimal currentAmount,
 
         @NotNull(message = "Target date is required")
-        @Future(message = "Target date must be in the future")
+        @FutureOrPresent(message = "Target date must be today or in the future")
         LocalDate targetDate
 ) {
 }
