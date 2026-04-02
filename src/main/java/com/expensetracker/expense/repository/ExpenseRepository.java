@@ -45,6 +45,20 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long>, JpaSpec
             """)
     List<Expense> findTopByUserIdOrderByExpenseDateDescIdDesc(@Param("userId") Long userId, Pageable pageable);
 
+    @Query("""
+            select e
+            from Expense e
+            where e.user.id = :userId
+              and e.expenseDate between :startDate and :endDate
+            order by e.amount desc, e.id desc
+            """)
+    List<Expense> findTopByUserIdAndExpenseDateBetweenOrderByAmountDescIdDesc(
+            @Param("userId") Long userId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate,
+            Pageable pageable
+    );
+
     default List<Expense> findTopByUserIdOrderByExpenseDateDescIdDesc(Long userId, int limit) {
         return findTopByUserIdOrderByExpenseDateDescIdDesc(userId, Pageable.ofSize(limit));
     }
