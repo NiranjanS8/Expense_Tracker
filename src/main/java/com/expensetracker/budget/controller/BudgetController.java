@@ -8,7 +8,6 @@ import com.expensetracker.user.entity.User;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
-import java.time.YearMonth;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -44,7 +43,7 @@ public class BudgetController {
 
     @PutMapping("/{budgetMonth}")
     public BudgetSummaryResponse updateBudget(
-            @PathVariable @DateTimeFormat(pattern = "yyyy-MM") YearMonth budgetMonth,
+            @PathVariable String budgetMonth,
             @Valid @RequestBody BudgetRequest request,
             @AuthenticationPrincipal User user
     ) {
@@ -53,7 +52,7 @@ public class BudgetController {
 
     @GetMapping("/{budgetMonth}")
     public BudgetSummaryResponse getBudgetByMonth(
-            @PathVariable @DateTimeFormat(pattern = "yyyy-MM") YearMonth budgetMonth,
+            @PathVariable String budgetMonth,
             @AuthenticationPrincipal User user
     ) {
         return budgetService.getBudgetByMonth(budgetMonth, user);
@@ -67,7 +66,7 @@ public class BudgetController {
     @GetMapping
     public List<BudgetSummaryResponse> getBudgetHistory(
             @AuthenticationPrincipal User user,
-            @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM") YearMonth budgetMonth,
+            @RequestParam(required = false) String budgetMonth,
             @RequestParam(required = false) @Min(value = 2000, message = "year must be 2000 or greater")
             @Max(value = 2100, message = "year must be 2100 or less") Integer year
     ) {

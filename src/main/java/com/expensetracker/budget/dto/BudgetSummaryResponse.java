@@ -2,13 +2,12 @@ package com.expensetracker.budget.dto;
 
 import com.expensetracker.budget.entity.Budget;
 import java.math.BigDecimal;
-import java.time.YearMonth;
 import java.util.List;
 
 public record BudgetSummaryResponse(
         Long id,
         BigDecimal budgetAmount,
-        YearMonth budgetMonth,
+        String budgetMonth,
         BigDecimal spentAmount,
         BigDecimal remainingAmount,
         BigDecimal overBudgetAmount,
@@ -37,7 +36,7 @@ public record BudgetSummaryResponse(
         return new BudgetSummaryResponse(
                 budget.getId(),
                 budget.getAmount(),
-                budget.getBudgetMonth(),
+                budget.getBudgetMonth().toString(),
                 spentAmount,
                 remainingAmount,
                 overBudgetAmount,
@@ -51,11 +50,11 @@ public record BudgetSummaryResponse(
         );
     }
 
-    public static BudgetSummaryResponse empty(YearMonth budgetMonth) {
+    public static BudgetSummaryResponse empty(java.time.YearMonth budgetMonth) {
         return new BudgetSummaryResponse(
                 null,
                 BigDecimal.ZERO,
-                budgetMonth,
+                budgetMonth.toString(),
                 BigDecimal.ZERO,
                 BigDecimal.ZERO,
                 BigDecimal.ZERO,

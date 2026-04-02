@@ -17,6 +17,7 @@ import java.math.RoundingMode;
 import java.time.YearMonth;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,24 +32,27 @@ public class BudgetService {
 
     @Transactional
     public BudgetSummaryResponse createBudget(BudgetRequest request, User user) {
-        validateBudgetMonth(request.budgetMonth());
-        if (budgetRepository.existsByUserIdAndBudgetMonth(user.getId(), request.budgetMonth())) {
+        YearMonth budgetMonth = parseBudgetMonth(request.budgetMonth());
+        validateBudgetMonth(budgetMonth);
+        if (hasBudgetForMonth(user.getId(), budgetMonth)) {
             throw new BadRequestException("Budget already exists for the given month");
         }
 
         Budget budget = new Budget();
         budget.setUser(user);
         budget.setAmount(request.amount());
-        budget.setBudgetMonth(request.budgetMonth());
+        budget.setBudgetMonth(budgetMonth);
 
         return toBudgetResponse(budgetRepository.save(budget));
     }
 
     @Transactional
-    public BudgetSummaryResponse updateBudget(YearMonth budgetMonth, BudgetRequest request, User user) {
+    public BudgetSummaryResponse updateBudget(String budgetMonthValue, BudgetRequest request, User user) {
+        YearMonth budgetMonth = parseBudgetMonth(budgetMonthValue);
+        YearMonth requestBudgetMonth = parseBudgetMonth(request.budgetMonth());
         validateBudgetMonth(budgetMonth);
-        validateBudgetMonth(request.budgetMonth());
-        if (!budgetMonth.equals(request.budgetMonth())) {
+        validateBudgetMonth(requestBudgetMonth);
+        if (!budgetMonth.equals(requestBudgetMonth)) {
             throw new BadRequestException("Path month and request budgetMonth must match");
         }
 
@@ -59,7 +63,8 @@ public class BudgetService {
     }
 
     @Transactional(readOnly = true)
-    public BudgetSummaryResponse getBudgetByMonth(YearMonth budgetMonth, User user) {
+    public BudgetSummaryResponse getBudgetByMonth(String budgetMonthValue, User user) {
+        YearMonth budgetMonth = parseBudgetMonth(budgetMonthValue);
         validateBudgetMonth(budgetMonth);
         return toBudgetResponse(findBudgetByMonth(user.getId(), budgetMonth));
     }
@@ -67,7 +72,10 @@ public class BudgetService {
     @Transactional(readOnly = true)
     public BudgetSummaryResponse getCurrentMonthBudget(User user) {
         YearMonth currentMonth = YearMonth.now();
-        return budgetRepository.findByUserIdAndBudgetMonth(user.getId(), currentMonth)
+        return budgetRepository.findAllByUserIdOrderByBudgetMonthDesc(user.getId())
+                .stream()
+                .filter(budget -> budget.getBudgetMonth().equals(currentMonth))
+                .findFirst()
                 .map(this::toBudgetResponse)
                 .orElseGet(() -> BudgetSummaryResponse.empty(currentMonth));
     }
@@ -80,18 +88,17 @@ public class BudgetService {
 
         List<Budget> budgets;
         if (queryParams.budgetMonth() != null) {
-            validateBudgetMonth(queryParams.budgetMonth());
-            budgets = budgetRepository.findByUserIdAndBudgetMonth(user.getId(), queryParams.budgetMonth())
+            YearMonth budgetMonth = parseBudgetMonth(queryParams.budgetMonth());
+            validateBudgetMonth(budgetMonth);
+            budgets = budgetRepository.findAllByUserIdOrderByBudgetMonthDesc(user.getId())
                     .stream()
+                    .filter(budget -> budget.getBudgetMonth().equals(budgetMonth))
                     .toList();
         } else if (queryParams.year() != null) {
-            YearMonth startMonth = YearMonth.of(queryParams.year(), 1);
-            YearMonth endMonth = YearMonth.of(queryParams.year(), 12);
-            budgets = budgetRepository.findAllByUserIdAndBudgetMonthBetweenOrderByBudgetMonthDesc(
-                    user.getId(),
-                    startMonth,
-                    endMonth
-            );
+            budgets = budgetRepository.findAllByUserIdOrderByBudgetMonthDesc(user.getId())
+                    .stream()
+                    .filter(budget -> budget.getBudgetMonth().getYear() == queryParams.year())
+                    .toList();
         } else {
             budgets = budgetRepository.findAllByUserIdOrderByBudgetMonthDesc(user.getId());
         }
@@ -102,7 +109,10 @@ public class BudgetService {
     }
 
     private Budget findBudgetByMonth(Long userId, YearMonth budgetMonth) {
-        return budgetRepository.findByUserIdAndBudgetMonth(userId, budgetMonth)
+        return budgetRepository.findAllByUserIdOrderByBudgetMonthDesc(userId)
+                .stream()
+                .filter(budget -> budget.getBudgetMonth().equals(budgetMonth))
+                .findFirst()
                 .orElseThrow(() -> new ResourceNotFoundException("Budget not found for the given month"));
     }
 
@@ -150,9 +160,15 @@ public class BudgetService {
     }
 
     private List<Integer> resolveTriggeredThresholds(BigDecimal usagePercentage) {
-        return budgetAlertProperties.thresholds()
+        List<Integer> thresholds = budgetAlertProperties.thresholds();
+        if (thresholds == null || thresholds.isEmpty()) {
+            return List.of();
+        }
+
+        return thresholds
                 .stream()
-                .filter(threshold -> threshold != null && threshold > 0)
+                .filter(Objects::nonNull)
+                .filter(threshold -> threshold > 0)
                 .filter(threshold -> usagePercentage.compareTo(BigDecimal.valueOf(threshold)) >= 0)
                 .sorted(Comparator.naturalOrder())
                 .toList();
@@ -212,6 +228,20 @@ public class BudgetService {
 
         if (budgetMonth.isBefore(earliestSupportedMonth) || budgetMonth.isAfter(latestSupportedMonth)) {
             throw new BadRequestException("budgetMonth must be between 2000-01 and 2100-12");
+        }
+    }
+
+    private boolean hasBudgetForMonth(Long userId, YearMonth budgetMonth) {
+        return budgetRepository.findAllByUserIdOrderByBudgetMonthDesc(userId)
+                .stream()
+                .anyMatch(budget -> budget.getBudgetMonth().equals(budgetMonth));
+    }
+
+    private YearMonth parseBudgetMonth(String budgetMonth) {
+        try {
+            return YearMonth.parse(budgetMonth);
+        } catch (RuntimeException exception) {
+            throw new BadRequestException("Budget month must be in yyyy-MM format");
         }
     }
 }
