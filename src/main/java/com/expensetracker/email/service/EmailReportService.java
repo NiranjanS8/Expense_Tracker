@@ -18,6 +18,7 @@ import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.mail.MailException;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -122,7 +123,7 @@ public class EmailReportService {
             javaMailSender.get().send(mimeMessage);
 
             return new EmailReportSendResponse(preference.getEmail(), month, true, "Email report sent successfully.");
-        } catch (MessagingException exception) {
+        } catch (MessagingException | MailException exception) {
             logger.error("Failed to send email report to {}", preference.getEmail(), exception);
             return new EmailReportSendResponse(
                     preference.getEmail(),
