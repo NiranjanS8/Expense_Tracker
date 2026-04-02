@@ -4,6 +4,7 @@ import com.expensetracker.email.dto.EmailReportPreferenceRequest;
 import com.expensetracker.email.dto.EmailReportPreferenceResponse;
 import com.expensetracker.email.dto.EmailReportSendResponse;
 import com.expensetracker.email.service.EmailReportService;
+import com.expensetracker.security.RateLimitService;
 import com.expensetracker.user.entity.User;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,7 @@ import java.time.YearMonth;
 public class EmailReportController {
 
     private final EmailReportService emailReportService;
+    private final RateLimitService rateLimitService;
 
     @GetMapping("/preference")
     public EmailReportPreferenceResponse getPreference(@AuthenticationPrincipal User user) {
@@ -44,6 +46,7 @@ public class EmailReportController {
             @AuthenticationPrincipal User user,
             @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM") YearMonth month
     ) {
+        rateLimitService.checkEmailSendRateLimit(user);
         return emailReportService.sendManualReport(user, month);
     }
 }

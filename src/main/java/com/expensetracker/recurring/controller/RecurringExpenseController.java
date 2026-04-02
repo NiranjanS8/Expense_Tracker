@@ -5,6 +5,7 @@ import com.expensetracker.recurring.dto.RecurringExpenseResponse;
 import com.expensetracker.recurring.dto.RecurringExpenseStatusRequest;
 import com.expensetracker.recurring.dto.RecurringGenerationResponse;
 import com.expensetracker.recurring.service.RecurringExpenseService;
+import com.expensetracker.security.RateLimitService;
 import com.expensetracker.user.entity.User;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +32,7 @@ import java.util.List;
 public class RecurringExpenseController {
 
     private final RecurringExpenseService recurringExpenseService;
+    private final RateLimitService rateLimitService;
 
     @GetMapping
     public List<RecurringExpenseResponse> getRecurringExpenses(@AuthenticationPrincipal User user) {
@@ -69,6 +71,7 @@ public class RecurringExpenseController {
             @AuthenticationPrincipal User user,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate runDate
     ) {
+        rateLimitService.checkRecurringGenerationRateLimit(user);
         return recurringExpenseService.generateDueRecurringExpensesForUser(
                 runDate == null ? LocalDate.now() : runDate,
                 user

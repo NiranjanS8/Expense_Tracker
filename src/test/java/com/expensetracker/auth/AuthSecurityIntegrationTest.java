@@ -1,5 +1,6 @@
 package com.expensetracker.auth;
 
+import com.expensetracker.security.RateLimitService;
 import com.expensetracker.user.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,9 +34,13 @@ class AuthSecurityIntegrationTest {
     @Autowired
     private WebApplicationContext webApplicationContext;
 
+    @Autowired
+    private RateLimitService rateLimitService;
+
     @BeforeEach
     void setUp() {
         userRepository.deleteAll();
+        rateLimitService.clearAll();
         mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext)
                 .apply(SecurityMockMvcConfigurers.springSecurity())
                 .build();
@@ -175,6 +180,46 @@ class AuthSecurityIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", equalTo("Validation failed")))
                 .andExpect(jsonPath("$.details", hasSize(3)));
+    }
+
+    @Test
+    void loginShouldRateLimitByClientIp() throws Exception {
+        registerUser("ratelimit-login@example.com");
+
+        for (int attempt = 0; attempt < 5; attempt++) {
+            mockMvc.perform(post("/api/auth/login")
+                            .contextPath("/api")
+                            .with(csrf())
+                            .with(request -> {
+                                request.setRemoteAddr("10.0.0.1");
+                                return request;
+                            })
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                      "email": "ratelimit-login@example.com",
+                                      "password": "WrongPassword@123"
+                                    }
+                                    """))
+                    .andExpect(status().isUnauthorized());
+        }
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contextPath("/api")
+                        .with(csrf())
+                        .with(request -> {
+                            request.setRemoteAddr("10.0.0.1");
+                            return request;
+                        })
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "email": "ratelimit-login@example.com",
+                                  "password": "WrongPassword@123"
+                                }
+                                """))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.message", equalTo("Too many login attempts. Please try again later.")));
     }
 
     private void registerUser(String email) throws Exception {

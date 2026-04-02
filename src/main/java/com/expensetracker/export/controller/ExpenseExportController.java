@@ -5,6 +5,7 @@ import com.expensetracker.export.dto.ExpenseExportJobRequest;
 import com.expensetracker.export.dto.ExpenseExportJobResponse;
 import com.expensetracker.export.service.ExpenseExportJobService;
 import com.expensetracker.export.service.ExpenseExportService;
+import com.expensetracker.security.RateLimitService;
 import com.expensetracker.user.entity.User;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
@@ -33,13 +34,16 @@ public class ExpenseExportController {
 
     private final ExpenseExportService expenseExportService;
     private final ExpenseExportJobService expenseExportJobService;
+    private final RateLimitService rateLimitService;
 
     public ExpenseExportController(
             ExpenseExportService expenseExportService,
-            ExpenseExportJobService expenseExportJobService
+            ExpenseExportJobService expenseExportJobService,
+            RateLimitService rateLimitService
     ) {
         this.expenseExportService = expenseExportService;
         this.expenseExportJobService = expenseExportJobService;
+        this.rateLimitService = rateLimitService;
     }
 
     @PostMapping("/jobs")
@@ -47,6 +51,7 @@ public class ExpenseExportController {
             @AuthenticationPrincipal User user,
             @Valid @RequestBody ExpenseExportJobRequest request
     ) {
+        rateLimitService.checkExportJobRateLimit(user);
         return ResponseEntity.accepted().body(expenseExportJobService.createJob(user, request));
     }
 

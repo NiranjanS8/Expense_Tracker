@@ -1,6 +1,7 @@
 package com.expensetracker.features;
 
 import com.expensetracker.export.service.ExpenseExportJobService;
+import com.expensetracker.security.RateLimitService;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -48,8 +49,12 @@ class FeatureIntegrationTest {
     @Autowired
     private ExpenseExportJobService expenseExportJobService;
 
+    @Autowired
+    private RateLimitService rateLimitService;
+
     @BeforeEach
     void setUp() {
+        rateLimitService.clearAll();
         jdbcTemplate.execute("DELETE FROM expenses");
         jdbcTemplate.execute("DELETE FROM expense_export_jobs");
         jdbcTemplate.execute("DELETE FROM recurring_expenses");
@@ -365,6 +370,38 @@ class FeatureIntegrationTest {
     }
 
     @Test
+    void exportJobCreationShouldRateLimitPerUser() throws Exception {
+        String token = registerAndLogin("export-rate-limit@example.com");
+
+        for (int attempt = 0; attempt < 5; attempt++) {
+            mockMvc.perform(post("/api/exports/jobs")
+                            .contextPath("/api")
+                            .with(csrf())
+                            .header(HttpHeaders.AUTHORIZATION, bearerToken(token))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                      "type": "CSV"
+                                    }
+                                    """))
+                    .andExpect(status().isAccepted());
+        }
+
+        mockMvc.perform(post("/api/exports/jobs")
+                        .contextPath("/api")
+                        .with(csrf())
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(token))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "type": "CSV"
+                                }
+                                """))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.message", equalTo("Too many export job requests. Please try again later.")));
+    }
+
+    @Test
     void emailReportsShouldStorePreferenceAndReturnFallbackWhenMailSenderIsMissing() throws Exception {
         String token = registerAndLogin("emailreports@example.com");
         long categoryId = createCategory(token, "Food");
@@ -397,6 +434,64 @@ class FeatureIntegrationTest {
                 .andExpect(jsonPath("$.sent", equalTo(false)))
                 .andExpect(jsonPath("$.message",
                         equalTo("Mail sender is not configured. Report was generated and logged only.")));
+    }
+
+    @Test
+    void emailReportSendShouldRateLimitPerUser() throws Exception {
+        String token = registerAndLogin("email-rate-limit@example.com");
+
+        mockMvc.perform(put("/api/email-reports/preference")
+                        .contextPath("/api")
+                        .with(csrf())
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(token))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "email": "ratelimited@example.com",
+                                  "enabled": true
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mockMvc.perform(post("/api/email-reports/send")
+                            .contextPath("/api")
+                            .with(csrf())
+                            .header(HttpHeaders.AUTHORIZATION, bearerToken(token))
+                            .param("month", "2026-03"))
+                    .andExpect(status().isOk());
+        }
+
+        mockMvc.perform(post("/api/email-reports/send")
+                        .contextPath("/api")
+                        .with(csrf())
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(token))
+                        .param("month", "2026-03"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.message", equalTo("Too many email report requests. Please try again later.")));
+    }
+
+    @Test
+    void recurringGenerationShouldRateLimitPerUser() throws Exception {
+        String token = registerAndLogin("recurring-rate-limit@example.com");
+
+        for (int attempt = 0; attempt < 10; attempt++) {
+            mockMvc.perform(post("/api/recurring-expenses/generate")
+                            .contextPath("/api")
+                            .with(csrf())
+                            .header(HttpHeaders.AUTHORIZATION, bearerToken(token))
+                            .param("runDate", "2026-04-10"))
+                    .andExpect(status().isOk());
+        }
+
+        mockMvc.perform(post("/api/recurring-expenses/generate")
+                        .contextPath("/api")
+                        .with(csrf())
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(token))
+                        .param("runDate", "2026-04-10"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.message",
+                        equalTo("Too many recurring generation requests. Please try again later.")));
     }
 
     private String registerAndLogin(String email) throws Exception {
