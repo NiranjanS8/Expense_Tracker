@@ -2,6 +2,7 @@ package com.expensetracker.common.exception;
 
 import com.expensetracker.common.dto.ApiErrorResponse;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.ConstraintViolationException;
 import java.time.Instant;
 import java.util.List;
 import org.springframework.http.HttpStatus;
@@ -38,6 +39,19 @@ public class GlobalExceptionHandler {
         List<String> details = exception.getAllErrors()
                 .stream()
                 .map(error -> error.getDefaultMessage() == null ? "Validation failed" : error.getDefaultMessage())
+                .toList();
+
+        return buildResponse(HttpStatus.BAD_REQUEST, "Validation failed", request.getRequestURI(), details);
+    }
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<ApiErrorResponse> handleConstraintViolationException(
+            ConstraintViolationException exception,
+            HttpServletRequest request
+    ) {
+        List<String> details = exception.getConstraintViolations()
+                .stream()
+                .map(violation -> violation.getMessage())
                 .toList();
 
         return buildResponse(HttpStatus.BAD_REQUEST, "Validation failed", request.getRequestURI(), details);
