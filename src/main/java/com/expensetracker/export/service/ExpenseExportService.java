@@ -2,6 +2,7 @@ package com.expensetracker.export.service;
 
 import com.expensetracker.expense.dto.ExpenseQueryParams;
 import com.expensetracker.expense.dto.ExpenseResponse;
+import com.expensetracker.export.entity.ExpenseExportJobType;
 import com.expensetracker.expense.service.ExpenseQueryService;
 import com.expensetracker.user.entity.User;
 import com.lowagie.text.Document;
@@ -90,6 +91,13 @@ public class ExpenseExportService {
         } catch (DocumentException | IOException exception) {
             throw new IllegalStateException("Failed to generate PDF report", exception);
         }
+    }
+
+    public byte[] exportExpenses(User user, ExpenseQueryParams queryParams, ExpenseExportJobType exportType) {
+        return switch (exportType) {
+            case CSV -> exportExpensesAsCsv(user, queryParams);
+            case PDF -> exportExpensesAsPdf(user, queryParams);
+        };
     }
 
     private String escapeCsv(String value) {

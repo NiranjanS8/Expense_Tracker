@@ -1,5 +1,6 @@
 package com.expensetracker.features;
 
+import com.expensetracker.export.service.ExpenseExportJobService;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -44,15 +45,20 @@ class FeatureIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private ExpenseExportJobService expenseExportJobService;
+
     @BeforeEach
     void setUp() {
         jdbcTemplate.execute("DELETE FROM expenses");
+        jdbcTemplate.execute("DELETE FROM expense_export_jobs");
         jdbcTemplate.execute("DELETE FROM recurring_expenses");
         jdbcTemplate.execute("DELETE FROM smart_category_rules");
         jdbcTemplate.execute("DELETE FROM goals");
         jdbcTemplate.execute("DELETE FROM email_report_preferences");
         jdbcTemplate.execute("DELETE FROM budgets");
         jdbcTemplate.execute("DELETE FROM categories");
+        jdbcTemplate.execute("DELETE FROM job_locks");
         jdbcTemplate.execute("DELETE FROM users");
         mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext)
                 .apply(SecurityMockMvcConfigurers.springSecurity())
@@ -204,6 +210,55 @@ class FeatureIntegrationTest {
     }
 
     @Test
+    void asyncExportJobsShouldCompleteAndReturnDownloadableFiles() throws Exception {
+        String token = registerAndLogin("async-export@example.com");
+        long categoryId = createCategory(token, "Bills");
+
+        createExpense(token, categoryId, "Water bill", "2026-04-02", "450.00", "BANK_TRANSFER");
+
+        String jobResponse = mockMvc.perform(post("/api/exports/jobs")
+                        .contextPath("/api")
+                        .with(csrf())
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(token))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "type": "CSV",
+                                  "search": "Water"
+                                }
+                                """))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status", equalTo("PENDING")))
+                .andExpect(jsonPath("$.downloadReady", equalTo(false)))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        long jobId = extractLongField(jobResponse, "id");
+        expenseExportJobService.processPendingJobs();
+
+        mockMvc.perform(get("/api/exports/jobs/" + jobId)
+                        .contextPath("/api")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", equalTo("COMPLETED")))
+                .andExpect(jsonPath("$.downloadReady", equalTo(true)))
+                .andExpect(jsonPath("$.fileName", containsString(".csv")));
+
+        String csv = mockMvc.perform(get("/api/exports/jobs/" + jobId + "/download")
+                        .contextPath("/api")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(token)))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, containsString(".csv")))
+                .andExpect(content().contentType("text/csv"))
+                .andReturn()
+                .getResponse()
+                .getContentAsString(StandardCharsets.UTF_8);
+
+        org.junit.jupiter.api.Assertions.assertTrue(csv.contains("Water bill"));
+    }
+
+    @Test
     void csvExportShouldRejectRequestsExceedingTheRowLimit() throws Exception {
         String token = registerAndLogin("exportlimit@example.com");
         long categoryId = createCategory(token, "Bulk");
@@ -243,6 +298,69 @@ class FeatureIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, bearerToken(token)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message",
+                        equalTo("Export is limited to 5000 expenses. Narrow the filters and try again.")));
+    }
+
+    @Test
+    void asyncExportJobsShouldMoveToFailedWhenGenerationFails() throws Exception {
+        String token = registerAndLogin("async-export-fail@example.com");
+        long categoryId = createCategory(token, "Bulk");
+        long userId = findUserIdByEmail("async-export-fail@example.com");
+        Instant now = Instant.now();
+        Timestamp timestamp = Timestamp.from(now);
+
+        for (int index = 0; index < 5001; index++) {
+            jdbcTemplate.update(
+                    """
+                    INSERT INTO expenses (
+                        user_id,
+                        category_id,
+                        recurring_expense_id,
+                        amount,
+                        expense_date,
+                        description,
+                        payment_method,
+                        created_at,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    userId,
+                    categoryId,
+                    null,
+                    10.00,
+                    LocalDate.of(2026, 4, 1),
+                    "Bulk expense " + index,
+                    "CARD",
+                    timestamp,
+                    timestamp
+            );
+        }
+
+        String jobResponse = mockMvc.perform(post("/api/exports/jobs")
+                        .contextPath("/api")
+                        .with(csrf())
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(token))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "type": "CSV"
+                                }
+                                """))
+                .andExpect(status().isAccepted())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        long jobId = extractLongField(jobResponse, "id");
+        expenseExportJobService.processPendingJobs();
+
+        mockMvc.perform(get("/api/exports/jobs/" + jobId)
+                        .contextPath("/api")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", equalTo("FAILED")))
+                .andExpect(jsonPath("$.downloadReady", equalTo(false)))
+                .andExpect(jsonPath("$.errorMessage",
                         equalTo("Export is limited to 5000 expenses. Narrow the filters and try again.")));
     }
 
