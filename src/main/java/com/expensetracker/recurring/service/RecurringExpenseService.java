@@ -13,6 +13,7 @@ import com.expensetracker.recurring.entity.RecurringFrequency;
 import com.expensetracker.recurring.repository.RecurringExpenseRepository;
 import com.expensetracker.user.entity.User;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -121,8 +122,12 @@ public class RecurringExpenseService {
                     expense.setDescription(recurringExpense.getDescription());
                     expense.setPaymentMethod(recurringExpense.getPaymentMethod());
                     expense.setRecurringExpense(recurringExpense);
-                    expenseRepository.save(expense);
-                    generatedExpenses++;
+                    try {
+                        expenseRepository.save(expense);
+                        generatedExpenses++;
+                    } catch (DataIntegrityViolationException exception) {
+                        // A concurrent run may have already created the same recurring entry.
+                    }
                 }
 
                 recurringExpense.setNextExecutionDate(nextExecutionDate(

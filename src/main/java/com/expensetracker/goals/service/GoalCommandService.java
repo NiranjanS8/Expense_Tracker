@@ -4,10 +4,13 @@ import com.expensetracker.common.exception.BadRequestException;
 import com.expensetracker.goals.dto.GoalRequest;
 import com.expensetracker.goals.dto.GoalResponse;
 import com.expensetracker.goals.entity.Goal;
+import com.expensetracker.goals.event.GoalChangeType;
+import com.expensetracker.goals.event.GoalChangedEvent;
 import com.expensetracker.goals.repository.GoalRepository;
 import com.expensetracker.user.entity.User;
 import java.math.BigDecimal;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,6 +20,7 @@ public class GoalCommandService {
 
     private final GoalRepository goalRepository;
     private final GoalQueryService goalQueryService;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     @Transactional
     public GoalResponse createGoal(GoalRequest request, User user) {
@@ -29,7 +33,9 @@ public class GoalCommandService {
         goal.setCurrentAmount(request.currentAmount());
         goal.setTargetDate(request.targetDate());
 
-        return goalQueryService.toResponse(goalRepository.save(goal));
+        Goal savedGoal = goalRepository.save(goal);
+        publishGoalChanged(savedGoal, GoalChangeType.CREATED);
+        return goalQueryService.toResponse(savedGoal);
     }
 
     @Transactional
@@ -42,17 +48,32 @@ public class GoalCommandService {
         goal.setCurrentAmount(request.currentAmount());
         goal.setTargetDate(request.targetDate());
 
+        publishGoalChanged(goal, GoalChangeType.UPDATED);
         return goalQueryService.toResponse(goal);
     }
 
     @Transactional
     public void deleteGoal(Long goalId, User user) {
-        goalRepository.delete(goalQueryService.findGoal(goalId, user.getId()));
+        Goal goal = goalQueryService.findGoal(goalId, user.getId());
+        goalRepository.delete(goal);
+        publishGoalChanged(goal, GoalChangeType.DELETED);
     }
 
     private void validateGoalAmounts(BigDecimal currentAmount, BigDecimal targetAmount) {
         if (currentAmount.compareTo(targetAmount) > 0) {
             throw new BadRequestException("Current amount cannot be greater than target amount");
         }
+    }
+
+    private void publishGoalChanged(Goal goal, GoalChangeType changeType) {
+        applicationEventPublisher.publishEvent(new GoalChangedEvent(
+                goal.getId(),
+                goal.getUser().getId(),
+                goal.getName(),
+                goal.getTargetAmount(),
+                goal.getCurrentAmount(),
+                goal.getTargetDate(),
+                changeType
+        ));
     }
 }

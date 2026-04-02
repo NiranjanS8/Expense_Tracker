@@ -3,11 +3,14 @@ package com.expensetracker.budget.service;
 import com.expensetracker.budget.dto.BudgetRequest;
 import com.expensetracker.budget.dto.BudgetSummaryResponse;
 import com.expensetracker.budget.entity.Budget;
+import com.expensetracker.budget.event.BudgetChangeType;
+import com.expensetracker.budget.event.BudgetChangedEvent;
 import com.expensetracker.budget.repository.BudgetRepository;
 import com.expensetracker.common.exception.BadRequestException;
 import com.expensetracker.user.entity.User;
 import java.time.YearMonth;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,6 +20,7 @@ public class BudgetCommandService {
 
     private final BudgetRepository budgetRepository;
     private final BudgetQueryService budgetQueryService;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     @Transactional
     public BudgetSummaryResponse createBudget(BudgetRequest request, User user) {
@@ -31,7 +35,9 @@ public class BudgetCommandService {
         budget.setAmount(request.amount());
         budget.setBudgetMonth(budgetMonth);
 
-        return budgetQueryService.toBudgetResponse(budgetRepository.save(budget));
+        Budget savedBudget = budgetRepository.save(budget);
+        publishBudgetChanged(savedBudget, BudgetChangeType.CREATED);
+        return budgetQueryService.toBudgetResponse(savedBudget);
     }
 
     @Transactional
@@ -47,6 +53,17 @@ public class BudgetCommandService {
         Budget budget = budgetQueryService.findBudgetByMonth(user.getId(), budgetMonth);
         budget.setAmount(request.amount());
 
+        publishBudgetChanged(budget, BudgetChangeType.UPDATED);
         return budgetQueryService.toBudgetResponse(budget);
+    }
+
+    private void publishBudgetChanged(Budget budget, BudgetChangeType changeType) {
+        applicationEventPublisher.publishEvent(new BudgetChangedEvent(
+                budget.getId(),
+                budget.getUser().getId(),
+                budget.getBudgetMonth(),
+                budget.getAmount(),
+                changeType
+        ));
     }
 }

@@ -19,6 +19,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.BeforeEach;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertIterableEquals;
@@ -40,13 +41,20 @@ class BudgetServiceTest {
     @Mock
     private BudgetAlertProperties budgetAlertProperties;
 
+    @Mock
+    private ApplicationEventPublisher applicationEventPublisher;
+
     private BudgetQueryService budgetQueryService;
     private BudgetCommandService budgetCommandService;
 
     @BeforeEach
     void setUp() {
         budgetQueryService = new BudgetQueryService(budgetRepository, expenseRepository, budgetAlertProperties);
-        budgetCommandService = new BudgetCommandService(budgetRepository, budgetQueryService);
+        budgetCommandService = new BudgetCommandService(
+                budgetRepository,
+                budgetQueryService,
+                applicationEventPublisher
+        );
     }
 
     @Test
