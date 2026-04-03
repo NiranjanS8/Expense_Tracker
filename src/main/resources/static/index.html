@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Expense Tracker</title>
+    <link rel="stylesheet" href="/api/style.css">
+</head>
+<body>
+<div class="page-shell">
+    <div class="background-orb orb-one"></div>
+    <div class="background-orb orb-two"></div>
+
+    <section class="hero-panel">
+        <div class="hero-copy">
+            <p class="eyebrow">Expense Tracker</p>
+            <h1>Minimal money clarity with a calm, earthy edge.</h1>
+            <p class="hero-text">
+                Track spending, spot patterns, and keep your budget visible without turning your workflow into noise.
+            </p>
+            <div class="hero-pills">
+                <span>JWT auth</span>
+                <span>Budgets</span>
+                <span>Insights</span>
+                <span>Exports</span>
+            </div>
+        </div>
+
+        <div id="authCard" class="auth-card">
+            <div class="card-header">
+                <p class="eyebrow">Access</p>
+                <h2 id="authTitle">Welcome back</h2>
+                <p id="authSubtitle" class="subtle-text">Sign in to load your dashboard.</p>
+            </div>
+
+            <form id="authForm" class="stack-form">
+                <div id="fullNameField" class="field-group hidden">
+                    <label for="fullName">Full name</label>
+                    <input id="fullName" name="fullName" type="text" maxlength="100" placeholder="Riya Sharma">
+                </div>
+
+                <div class="field-group">
+                    <label for="email">Email</label>
+                    <input id="email" name="email" type="email" placeholder="demo@expensetracker.com" required>
+                </div>
+
+                <div class="field-group">
+                    <label for="password">Password</label>
+                    <input id="password" name="password" type="password" placeholder="Password@123" required>
+                </div>
+
+                <button id="authSubmit" type="submit" class="primary-button">Sign in</button>
+            </form>
+
+            <div class="auth-footer">
+                <button id="authToggle" type="button" class="text-button">Need an account? Register</button>
+                <button id="demoFill" type="button" class="secondary-button">Use demo account</button>
+            </div>
+
+            <p id="authMessage" class="inline-message"></p>
+        </div>
+    </section>
+
+    <main id="appPanel" class="app-panel hidden">
+        <header class="app-header">
+            <div>
+                <p class="eyebrow">Workspace</p>
+                <h2 id="welcomeTitle">Your spending overview</h2>
+                <p id="welcomeMeta" class="subtle-text">Loading account details...</p>
+            </div>
+
+            <div class="header-actions">
+                <label class="month-picker">
+                    <span>Month</span>
+                    <input id="monthFilter" type="month">
+                </label>
+                <button id="refreshButton" type="button" class="secondary-button">Refresh</button>
+                <button id="logoutButton" type="button" class="ghost-button">Logout</button>
+            </div>
+        </header>
+
+        <section class="metrics-grid">
+            <article class="metric-card accent-card">
+                <p class="metric-label">Monthly total</p>
+                <h3 id="monthlyTotal">Rs 0</h3>
+                <p class="metric-foot">Current selected month</p>
+            </article>
+            <article class="metric-card">
+                <p class="metric-label">Transactions</p>
+                <h3 id="transactionCount">0</h3>
+                <p class="metric-foot">Logged expenses</p>
+            </article>
+            <article class="metric-card">
+                <p class="metric-label">Top category</p>
+                <h3 id="topCategory">No data</h3>
+                <p id="topCategoryAmount" class="metric-foot">Add expenses to see trends</p>
+            </article>
+            <article class="metric-card">
+                <p class="metric-label">Status</p>
+                <h3 id="budgetSignal">In control</h3>
+                <p id="budgetSignalFoot" class="metric-foot">Latest month snapshot</p>
+            </article>
+        </section>
+
+        <section class="content-grid">
+            <article class="surface-card form-card">
+                <div class="card-header">
+                    <p class="eyebrow">Quick add</p>
+                    <h3>Add an expense</h3>
+                </div>
+
+                <form id="expenseForm" class="stack-form dense-form">
+                    <div class="field-row">
+                        <div class="field-group">
+                            <label for="amount">Amount</label>
+                            <input id="amount" name="amount" type="number" min="0.01" step="0.01" placeholder="450.00" required>
+                        </div>
+                        <div class="field-group">
+                            <label for="expenseDate">Date</label>
+                            <input id="expenseDate" name="expenseDate" type="date" required>
+                        </div>
+                    </div>
+
+                    <div class="field-row">
+                        <div class="field-group">
+                            <label for="categoryId">Category</label>
+                            <select id="categoryId" name="categoryId" required></select>
+                        </div>
+                        <div class="field-group">
+                            <label for="paymentMethod">Payment</label>
+                            <select id="paymentMethod" name="paymentMethod" required>
+                                <option value="CARD">Card</option>
+                                <option value="UPI">UPI</option>
+                                <option value="BANK_TRANSFER">Bank transfer</option>
+                                <option value="CASH">Cash</option>
+                                <option value="WALLET">Wallet</option>
+                                <option value="OTHER">Other</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="field-group">
+                        <label for="description">Description</label>
+                        <input id="description" name="description" type="text" maxlength="255" placeholder="Water bill, groceries, ride fare...">
+                    </div>
+
+                    <button type="submit" class="primary-button">Save expense</button>
+                    <p id="expenseMessage" class="inline-message"></p>
+                </form>
+            </article>
+
+            <article class="surface-card chart-card">
+                <div class="card-header">
+                    <p class="eyebrow">Breakdown</p>
+                    <h3>Category split</h3>
+                </div>
+                <div id="categoryBreakdown" class="bar-list empty-state">
+                    No category data yet.
+                </div>
+            </article>
+
+            <article class="surface-card recent-card">
+                <div class="card-header inline-header">
+                    <div>
+                        <p class="eyebrow">Ledger</p>
+                        <h3>Recent transactions</h3>
+                    </div>
+                    <button id="loadExpensesButton" type="button" class="text-button">Reload list</button>
+                </div>
+
+                <div id="expensesList" class="expense-list empty-state">
+                    No expenses yet.
+                </div>
+            </article>
+        </section>
+    </main>
+</div>
+
+<script src="/api/app.js"></script>
+</body>
+</html>
