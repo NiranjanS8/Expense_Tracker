@@ -31,6 +31,10 @@ export default function OverviewSection({
   expenseMessage,
   handleExpenseSubmit,
   paymentMethods,
+  monthLabel,
+  onPreviousMonth,
+  onNextMonth,
+  canMoveToNextMonth,
 }) {
   const topCategory = [...(categoryBreakdown || [])].sort(
     (left, right) => Number(right.totalAmount || 0) - Number(left.totalAmount || 0),
@@ -43,8 +47,18 @@ export default function OverviewSection({
   return (
     <>
       <section className="page-intro">
-        <h2>Overview</h2>
-        <p className="muted">Your financial snapshot at a glance</p>
+        <div>
+          <h2>Overview</h2>
+        </div>
+        <div className="month-switcher month-switcher--page">
+          <button type="button" onClick={onPreviousMonth}>
+            <ChevronLeft size={16} />
+          </button>
+          <span>{monthLabel}</span>
+          <button type="button" onClick={onNextMonth} disabled={!canMoveToNextMonth}>
+            <ChevronRight size={16} />
+          </button>
+        </div>
       </section>
 
       <section className="summary-grid">
@@ -72,9 +86,9 @@ export default function OverviewSection({
         />
         <SummaryCard
           icon={Receipt}
-          label="Recent activity"
-          value={String(expensesPage?.totalElements || summary?.transactionCount || 0)}
-          detail="Paginated transaction history"
+          label="Transactions"
+          value={String(summary?.transactionCount || 0)}
+          detail="Captured this month"
         />
       </section>
 
@@ -157,7 +171,6 @@ export default function OverviewSection({
                     description: event.target.value,
                   }))
                 }
-                placeholder="Lunch, groceries, petrol, subscriptions..."
                 required
               />
             </label>

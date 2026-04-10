@@ -1,13 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeft,
-  ArrowRight,
-  FileDown,
   FileText,
   LayoutDashboard,
   LogOut,
   Menu,
-  RefreshCw,
   Receipt,
   Target,
   Wallet,
@@ -128,6 +124,11 @@ export default function App() {
       month: "long",
       year: "numeric",
     }).format(new Date(year, monthValue - 1, 1));
+  }, [month]);
+
+  const canMoveToNextMonth = useMemo(() => {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    return month < currentMonth;
   }, [month]);
 
   useEffect(() => {
@@ -624,42 +625,25 @@ export default function App() {
         </nav>
 
         <div className="sidebar__footer muted">
-          <p>Version 1.0.0</p>
+          <button className="ghost-button sidebar__logout" type="button" onClick={() => logout()}>
+            <LogOut size={16} />
+            Logout
+          </button>
           <p>© 2026 Finova</p>
         </div>
       </aside>
 
       <section className="dashboard-shell">
-        <header className="dashboard-header glass-panel">
-          <div className="header-left">
-            {isMobile && (
+        {isMobile && (
+          <header className="dashboard-header glass-panel">
+            <div className="header-left">
               <button className="ghost-button icon-only" type="button" onClick={() => setSidebarOpen((value) => !value)}>
                 {sidebarOpen ? <X size={16} /> : <Menu size={16} />}
               </button>
-            )}
-            <div className="month-switcher">
-              <button type="button" onClick={() => setMonth((current) => shiftMonth(current, -1))}>
-                <ArrowLeft size={16} />
-              </button>
-              <span>{monthLabel}</span>
-              <button type="button" onClick={() => setMonth((current) => shiftMonth(current, 1))}>
-                <ArrowRight size={16} />
-              </button>
+              <span className="dashboard-header__title">{sections.find((section) => section.id === activeSection)?.label || "Overview"}</span>
             </div>
-          </div>
-
-          <div className="header-actions">
-            <button className="ghost-button icon-only" type="button" onClick={() => void loadSection(activeSection)} title="Refresh">
-              <RefreshCw size={16} />
-            </button>
-            <button className="ghost-button icon-only" type="button" onClick={() => setActiveSection("reports")} title="Reports">
-              <FileDown size={16} />
-            </button>
-            <button className="ghost-button icon-only danger" type="button" onClick={() => logout()} title="Logout">
-              <LogOut size={16} />
-            </button>
-          </div>
-        </header>
+          </header>
+        )}
 
         {globalMessage && <p className="form-success">{globalMessage}</p>}
 
@@ -678,6 +662,10 @@ export default function App() {
             expenseMessage={expenseMessage}
             handleExpenseSubmit={handleExpenseSubmit}
             paymentMethods={paymentMethods}
+            monthLabel={monthLabel}
+            onPreviousMonth={() => setMonth((current) => shiftMonth(current, -1))}
+            onNextMonth={() => setMonth((current) => shiftMonth(current, 1))}
+            canMoveToNextMonth={canMoveToNextMonth}
           />
         )}
 
