@@ -2,15 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
-  BarChart3,
-  Brain,
-  CalendarClock,
+  FileDown,
+  FileText,
   LayoutDashboard,
   LogOut,
-  PiggyBank,
+  Menu,
   RefreshCw,
-  ScrollText,
+  Receipt,
   Target,
+  Wallet,
+  X,
+  Zap,
 } from "lucide-react";
 import AuthScreen from "./components/AuthScreen";
 import AutomationSection from "./components/AutomationSection";
@@ -39,11 +41,11 @@ import {
 
 const sections = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
-  { id: "expenses", label: "Expenses", icon: ScrollText },
-  { id: "budgets", label: "Budgets", icon: PiggyBank },
+  { id: "expenses", label: "Expenses", icon: Receipt },
+  { id: "budgets", label: "Budgets", icon: Wallet },
   { id: "goals", label: "Goals", icon: Target },
-  { id: "automation", label: "Automation", icon: CalendarClock },
-  { id: "reports", label: "Reports", icon: Brain },
+  { id: "automation", label: "Automation", icon: Zap },
+  { id: "reports", label: "Reports", icon: FileText },
 ];
 
 export default function App() {
@@ -57,6 +59,8 @@ export default function App() {
   const [user, setUser] = useState(session?.user || null);
   const [month, setMonth] = useState(session?.month || new Date().toISOString().slice(0, 7));
   const [activeSection, setActiveSection] = useState("overview");
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 1024);
+  const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth >= 1024);
   const [loading, setLoading] = useState(false);
   const [globalMessage, setGlobalMessage] = useState("");
 
@@ -129,6 +133,17 @@ export default function App() {
   useEffect(() => {
     saveSession({ token, user, month });
   }, [token, user, month]);
+
+  useEffect(() => {
+    function handleResize() {
+      const mobile = window.innerWidth < 1024;
+      setIsMobile(mobile);
+      setSidebarOpen(!mobile);
+    }
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   useEffect(() => {
     if (!token) {
@@ -577,10 +592,12 @@ export default function App() {
 
   return (
     <main className="shell app-shell">
-      <aside className="glass-panel sidebar">
+      {isMobile && sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
+
+      <aside className={`glass-panel sidebar ${sidebarOpen ? "is-open" : ""}`}>
         <div className="sidebar__brand">
           <span className="eyebrow">Expense Tracker</span>
-          <h2>Mindful Money</h2>
+          <h2>Finova</h2>
           <p className="muted">{user?.email}</p>
         </div>
 
@@ -592,7 +609,12 @@ export default function App() {
                 key={section.id}
                 className={`nav-button ${activeSection === section.id ? "is-active" : ""}`}
                 type="button"
-                onClick={() => setActiveSection(section.id)}
+                onClick={() => {
+                  setActiveSection(section.id);
+                  if (isMobile) {
+                    setSidebarOpen(false);
+                  }
+                }}
               >
                 <Icon size={16} />
                 {section.label}
@@ -600,39 +622,41 @@ export default function App() {
             );
           })}
         </nav>
+
+        <div className="sidebar__footer muted">
+          <p>Version 1.0.0</p>
+          <p>© 2026 Finova</p>
+        </div>
       </aside>
 
       <section className="dashboard-shell">
         <header className="dashboard-header glass-panel">
-          <div>
-            <span className="eyebrow">Workspace</span>
-            <h1>{monthLabel}</h1>
-            <p className="muted">
-              {loading ? "Refreshing your finance workspace." : "The full app is now live."}
-            </p>
-          </div>
-
-          <div className="header-actions">
+          <div className="header-left">
+            {isMobile && (
+              <button className="ghost-button icon-only" type="button" onClick={() => setSidebarOpen((value) => !value)}>
+                {sidebarOpen ? <X size={16} /> : <Menu size={16} />}
+              </button>
+            )}
             <div className="month-switcher">
               <button type="button" onClick={() => setMonth((current) => shiftMonth(current, -1))}>
                 <ArrowLeft size={16} />
               </button>
-              <span>{month}</span>
+              <span>{monthLabel}</span>
               <button type="button" onClick={() => setMonth((current) => shiftMonth(current, 1))}>
                 <ArrowRight size={16} />
               </button>
             </div>
-            <button className="ghost-button" type="button" onClick={() => void loadSection(activeSection)}>
+          </div>
+
+          <div className="header-actions">
+            <button className="ghost-button icon-only" type="button" onClick={() => void loadSection(activeSection)} title="Refresh">
               <RefreshCw size={16} />
-              Refresh
             </button>
-            <button className="ghost-button" type="button" onClick={() => setActiveSection("reports")}>
-              <BarChart3 size={16} />
-              Reports
+            <button className="ghost-button icon-only" type="button" onClick={() => setActiveSection("reports")} title="Reports">
+              <FileDown size={16} />
             </button>
-            <button className="ghost-button" type="button" onClick={() => logout()}>
+            <button className="ghost-button icon-only danger" type="button" onClick={() => logout()} title="Logout">
               <LogOut size={16} />
-              Logout
             </button>
           </div>
         </header>

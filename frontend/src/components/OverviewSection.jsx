@@ -1,4 +1,4 @@
-import { DollarSign, Receipt, Tag, TrendingUp } from "lucide-react";
+import { ChevronLeft, ChevronRight, DollarSign, Receipt, Tag, TrendingUp } from "lucide-react";
 import { DateField, SelectField } from "./Controls";
 import { formatCurrency, formatDate, humanize } from "../lib";
 
@@ -42,6 +42,11 @@ export default function OverviewSection({
 
   return (
     <>
+      <section className="page-intro">
+        <h2>Overview</h2>
+        <p className="muted">Your financial snapshot at a glance</p>
+      </section>
+
       <section className="summary-grid">
         <SummaryCard
           icon={DollarSign}
@@ -51,13 +56,13 @@ export default function OverviewSection({
         />
         <SummaryCard
           icon={TrendingUp}
-          label="Average ticket"
+          label="Avg. transaction"
           value={formatCurrency(
             summary?.transactionCount
               ? Number(summary.monthlyTotal || 0) / Number(summary.transactionCount || 1)
               : 0,
           )}
-          detail={loading ? "Refreshing live data" : "Based on current month activity"}
+          detail={loading ? "Refreshing live data" : "Average per expense this month"}
         />
         <SummaryCard
           icon={Tag}
@@ -78,7 +83,7 @@ export default function OverviewSection({
           <div className="card-heading">
             <div>
               <span className="eyebrow">Quick add</span>
-              <h2>Capture an expense</h2>
+              <h2>Quick Add Expense</h2>
             </div>
           </div>
 
@@ -169,8 +174,8 @@ export default function OverviewSection({
         <article className="glass-panel feature-card">
           <div className="card-heading">
             <div>
-              <span className="eyebrow">Breakdown</span>
-              <h2>Category rhythm</h2>
+              <span className="eyebrow">Spending mix</span>
+              <h2>Category Breakdown</h2>
             </div>
           </div>
 
@@ -198,17 +203,17 @@ export default function OverviewSection({
       </section>
 
       <section className="glass-panel feature-card">
-        <div className="card-heading">
-          <div>
-            <span className="eyebrow">Recent activity</span>
-            <h2>Latest transactions</h2>
+          <div className="card-heading">
+            <div>
+              <span className="eyebrow">Recent activity</span>
+              <h2>Latest transactions</h2>
+            </div>
+            <div className="pagination-meta">
+              <span className="muted">
+                Page {(expensesPage?.page || 0) + 1} of {Math.max(expensesPage?.totalPages || 1, 1)}
+              </span>
+            </div>
           </div>
-          <div className="pagination-meta">
-            <span className="muted">
-              Page {(expensesPage?.page || 0) + 1} of {Math.max(expensesPage?.totalPages || 1, 1)}
-            </span>
-          </div>
-        </div>
 
         <div className="transactions">
           {expenses.length === 0 && <p className="muted">No expenses captured yet.</p>}
@@ -230,18 +235,18 @@ export default function OverviewSection({
 
         <div className="pagination-row">
           <button
-            className="ghost-button"
+            className="ghost-button icon-only"
             type="button"
             disabled={expensesPage?.first}
             onClick={() => setOverviewExpensePage((current) => Math.max(current - 1, 0))}
           >
-            Previous
+            <ChevronLeft size={16} />
           </button>
           <span className="muted">
-            Showing {expenses.length} of {expensesPage?.totalElements || 0}
+            Page {(expensesPage?.page || 0) + 1} of {Math.max(expensesPage?.totalPages || 1, 1)}
           </span>
           <button
-            className="ghost-button"
+            className="ghost-button icon-only"
             type="button"
             disabled={expensesPage?.last || expensesPage?.totalPages === 0}
             onClick={() =>
@@ -250,7 +255,7 @@ export default function OverviewSection({
               )
             }
           >
-            Next
+            <ChevronRight size={16} />
           </button>
         </div>
       </section>

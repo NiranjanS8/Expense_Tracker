@@ -1,4 +1,4 @@
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Shield, TrendingUp, Zap } from "lucide-react";
 
 export default function AuthScreen({
   mode,
@@ -11,46 +11,73 @@ export default function AuthScreen({
   authMessage,
   handleAuthSubmit,
 }) {
+  const capabilities = [
+    {
+      icon: TrendingUp,
+      title: "Track smarter",
+      text: "Track every expense with intelligent categorization.",
+    },
+    {
+      icon: Shield,
+      title: "Plan ahead",
+      text: "Set budgets and receive proactive insights.",
+    },
+    {
+      icon: Zap,
+      title: "Automate habits",
+      text: "Automate recurring expenses and smart rules.",
+    },
+  ];
+
   return (
     <main className="shell shell--auth">
-      <section className="auth-hero glass-panel">
-        <span className="eyebrow">Expense Tracker</span>
-        <h1>Mindful money, designed to feel calm.</h1>
-        <p>
-          Track spending, budgets, recurring habits, insights, and exports in one quiet
-          workspace inspired by the Figma concept.
-        </p>
-        <div className="hero-notes">
-          <div>
-            <strong>Full finance hub</strong>
-            <span>Dashboard, budgets, goals, automation, and reports.</span>
-          </div>
-          <div>
-            <strong>Quick capture</strong>
-            <span>Add expenses before they slip away.</span>
-          </div>
-          <div>
-            <strong>Grounded insights</strong>
-            <span>Understand patterns without the noise.</span>
-          </div>
+      <section className="auth-hero">
+        <div>
+          <span className="eyebrow">Expense Tracker</span>
+          <h1>Finova</h1>
+          <p>
+            A premium expense tracking platform designed for clarity, control, and confidence
+            in your personal finances.
+          </p>
+        </div>
+
+        <div className="capability-list">
+          {capabilities.map((capability) => {
+            const Icon = capability.icon;
+            return (
+              <div className="capability-item" key={capability.title}>
+                <div className="capability-item__icon">
+                  <Icon size={18} />
+                </div>
+                <div>
+                  <strong>{capability.title}</strong>
+                  <span>{capability.text}</span>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </section>
 
       <section className="auth-card glass-panel">
+        <div className="auth-mobile-brand">
+          <h1>Finova</h1>
+        </div>
+
         <div className="auth-switch">
           <button
             className={mode === "login" ? "is-active" : ""}
             onClick={() => setMode("login")}
             type="button"
           >
-            Login
+            Log In
           </button>
           <button
             className={mode === "register" ? "is-active" : ""}
             onClick={() => setMode("register")}
             type="button"
           >
-            Sign up
+            Sign Up
           </button>
         </div>
 
@@ -58,8 +85,8 @@ export default function AuthScreen({
           <h2>{mode === "login" ? "Welcome back" : "Create your account"}</h2>
           <p>
             {mode === "login"
-              ? "Sign in to open the full expense tracker workspace."
-              : "Create an account and start managing the whole app, not just the dashboard."}
+              ? "Sign in to your finance workspace."
+              : "Create an account to access budgets, automation, and reports."}
           </p>
         </div>
 
@@ -113,9 +140,18 @@ export default function AuthScreen({
           {authMessage && <p className="form-success">{authMessage}</p>}
 
           <button className="primary-button" type="submit">
-            {mode === "login" ? "Enter app" : "Create account"}
+            {mode === "login" ? "Log In" : "Create Account"}
           </button>
         </form>
+
+        {mode === "login" && <button className="text-link" type="button">Forgot password?</button>}
+
+        <div className="auth-footer">
+          <span>{mode === "login" ? "Don't have an account?" : "Already have an account?"}</span>
+          <button className="text-link" onClick={() => setMode(mode === "login" ? "register" : "login")} type="button">
+            {mode === "login" ? "Sign up" : "Log in"}
+          </button>
+        </div>
 
         <button
           className="secondary-link"
