@@ -13,6 +13,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -98,6 +99,18 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                 .header("Retry-After", String.valueOf(exception.getRetryAfterSeconds()))
                 .body(response);
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<ApiErrorResponse> handleResponseStatusException(
+            ResponseStatusException exception,
+            HttpServletRequest request
+    ) {
+        HttpStatus status = HttpStatus.valueOf(exception.getStatusCode().value());
+        String message = exception.getReason() == null || exception.getReason().isBlank()
+                ? status.getReasonPhrase()
+                : exception.getReason();
+        return buildResponse(status, message, request.getRequestURI(), List.of());
     }
 
     @ExceptionHandler(Exception.class)

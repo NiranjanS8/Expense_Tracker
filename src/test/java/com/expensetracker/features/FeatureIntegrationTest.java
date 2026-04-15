@@ -181,40 +181,6 @@ class FeatureIntegrationTest {
     }
 
     @Test
-    void exportEndpointsShouldReturnCsvAndPdfFiles() throws Exception {
-        String token = registerAndLogin("export@example.com");
-        long categoryId = createCategory(token, "Bills");
-
-        createExpense(token, categoryId, "Water bill", "2026-04-02", "450.00", "BANK_TRANSFER");
-
-        MvcResult csvResult = mockMvc.perform(get("/api/exports/expenses/csv")
-                        .contextPath("/api")
-                        .header(HttpHeaders.AUTHORIZATION, bearerToken(token))
-                        .param("search", "Water"))
-                .andExpect(status().isOk())
-                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, containsString("expenses.csv")))
-                .andExpect(content().contentType("text/csv"))
-                .andReturn();
-
-        String csv = csvResult.getResponse().getContentAsString(StandardCharsets.UTF_8);
-        org.junit.jupiter.api.Assertions.assertTrue(csv.contains("Water bill"));
-        org.junit.jupiter.api.Assertions.assertTrue(csv.contains("Bills"));
-
-        byte[] pdf = mockMvc.perform(get("/api/exports/expenses/pdf")
-                        .contextPath("/api")
-                        .header(HttpHeaders.AUTHORIZATION, bearerToken(token)))
-                .andExpect(status().isOk())
-                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, containsString("expenses.pdf")))
-                .andExpect(content().contentType(MediaType.APPLICATION_PDF))
-                .andReturn()
-                .getResponse()
-                .getContentAsByteArray();
-
-        org.junit.jupiter.api.Assertions.assertTrue(pdf.length > 4);
-        org.junit.jupiter.api.Assertions.assertEquals("%PDF", new String(pdf, 0, 4, StandardCharsets.US_ASCII));
-    }
-
-    @Test
     void asyncExportJobsShouldCompleteAndReturnDownloadableFiles() throws Exception {
         String token = registerAndLogin("async-export@example.com");
         long categoryId = createCategory(token, "Bills");
@@ -264,46 +230,22 @@ class FeatureIntegrationTest {
     }
 
     @Test
-    void csvExportShouldRejectRequestsExceedingTheRowLimit() throws Exception {
+    void removedSynchronousExportEndpointsShouldReturnGone() throws Exception {
         String token = registerAndLogin("exportlimit@example.com");
-        long categoryId = createCategory(token, "Bulk");
-        long userId = findUserIdByEmail("exportlimit@example.com");
-        Instant now = Instant.now();
-        Timestamp timestamp = Timestamp.from(now);
-
-        for (int index = 0; index < 5001; index++) {
-            jdbcTemplate.update(
-                    """
-                    INSERT INTO expenses (
-                        user_id,
-                        category_id,
-                        recurring_expense_id,
-                        amount,
-                        expense_date,
-                        description,
-                        payment_method,
-                        created_at,
-                        updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    userId,
-                    categoryId,
-                    null,
-                    10.00,
-                    LocalDate.of(2026, 4, 1),
-                    "Bulk expense " + index,
-                    "CARD",
-                    timestamp,
-                    timestamp
-            );
-        }
 
         mockMvc.perform(get("/api/exports/expenses/csv")
                         .contextPath("/api")
                         .header(HttpHeaders.AUTHORIZATION, bearerToken(token)))
-                .andExpect(status().isBadRequest())
+                .andExpect(status().isGone())
                 .andExpect(jsonPath("$.message",
-                        equalTo("Export is limited to 5000 expenses. Narrow the filters and try again.")));
+                        equalTo("Synchronous export endpoints were removed. Create an async export job at /exports/jobs instead.")));
+
+        mockMvc.perform(get("/api/exports/expenses/pdf")
+                        .contextPath("/api")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken(token)))
+                .andExpect(status().isGone())
+                .andExpect(jsonPath("$.message",
+                        equalTo("Synchronous export endpoints were removed. Create an async export job at /exports/jobs instead.")));
     }
 
     @Test
