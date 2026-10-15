@@ -33,6 +33,7 @@ from app.core.rate_limit import FixedWindowRateLimiter
 from app.identity.introspection import IdentityResolver
 from app.integrations.expense_tracker_client import ExpenseTrackerClient
 from app.integrations.model_provider import ProviderConfigurationError, build_provider
+from app.tools import build_tool_registry
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +46,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         base_url=settings.expense_tracker_base_url,
         context_path=settings.expense_tracker_context_path,
         timeout_seconds=settings.expense_tracker_timeout_seconds,
+        max_retries=settings.expense_tracker_max_retries,
+        retry_backoff_seconds=settings.expense_tracker_retry_backoff_seconds,
     )
     app.state.expense_tracker_client = client
     app.state.identity_resolver = IdentityResolver(
         client,
         ttl_seconds=settings.identity_cache_ttl_seconds,
     )
+    app.state.tool_registry = build_tool_registry()
 
     # A misconfigured provider must not prevent startup: readiness reports it.
     try:

@@ -21,10 +21,40 @@ Phase 1 — service foundation. Implemented:
 - A multi-stage container image and a compose file for local development, plus CI
   that lints, type-checks and tests both services.
 
-Not implemented yet: the LangGraph workflow, read-only financial tools,
-conversation persistence, and streaming. `/api/v1/chat` and the conversation
-routes require authentication and then return `501`, deliberately, rather than
-fabricating a response.
+Phase 2 — read-only tools. Implemented:
+
+- A typed, allowlisted tool layer over the verified Spring Boot endpoints, with no
+  database driver in the service at all.
+- Strict argument schemas that reject unknown fields, so an identity can never
+  arrive from model output.
+- Bounded inputs (date ranges, amounts, pagination, free text, list sizes) and
+  bounded, read-only retries on the upstream client.
+
+Not implemented yet: the LangGraph workflow, conversation persistence, and
+streaming. `/api/v1/chat` and the conversation routes require authentication and
+then return `501`, deliberately, rather than fabricating a response.
+
+## Tools
+
+`app/tools/` exposes eight read-only tools. Each one validates its arguments,
+forwards the caller's token to Spring Boot, and returns a typed result or a typed,
+client-safe error.
+
+| Tool | Verified endpoint |
+| --- | --- |
+| `get_spending_summary` | `GET /expenses/summary` |
+| `search_expenses` | `GET /expenses` |
+| `get_category_breakdown` | `GET /dashboard/categories` |
+| `get_dashboard_summary` | `GET /dashboard/summary` |
+| `get_budget_status` | `GET /budgets/current`, `GET /budgets/{month}`, `GET /budgets?year=` |
+| `get_goal_progress` | `GET /goals`, `GET /goals/{id}` |
+| `get_recurring_expenses` | `GET /recurring-expenses` |
+| `get_existing_insights` | `GET /insights/summary` |
+
+`app/tools/registry.py` is the allowlist: a tool that is not registered cannot be
+invoked, and no tool accepts a user identifier. A month with no budget, and a
+resource that belongs to another user, are both normal answers rather than
+failures.
 
 ## Requirements
 
@@ -110,6 +140,9 @@ All settings are read from the environment or `.env`. See `.env.example`.
 | --- | --- |
 | `EXPENSE_TRACKER_BASE_URL` | Spring Boot base URL (scheme + host + port) |
 | `EXPENSE_TRACKER_CONTEXT_PATH` | Servlet context path (default `/api`) |
+| `EXPENSE_TRACKER_TIMEOUT_SECONDS` | Total read timeout for an upstream call |
+| `EXPENSE_TRACKER_MAX_RETRIES` | Retries for transport failures and `502`/`503`/`504` (never for `4xx`) |
+| `EXPENSE_TRACKER_RETRY_BACKOFF_SECONDS` | Base delay between retries |
 | `IDENTITY_CACHE_TTL_SECONDS` | TTL for the token→identity cache (`0` disables it) |
 | `LLM_PROVIDER` | `openai` \| `anthropic` \| `mistral` \| `deepseek` \| `gemini` \| `fake` |
 | `<PROVIDER>_API_KEY` | Credential for the selected provider only |

@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     expense_tracker_base_url: str = "http://localhost:9090"
     expense_tracker_context_path: str = "/api"
     expense_tracker_timeout_seconds: float = Field(default=5.0, gt=0)
+    expense_tracker_max_retries: int = Field(default=1, ge=0, le=5)
+    expense_tracker_retry_backoff_seconds: float = Field(default=0.25, ge=0)
 
     identity_cache_ttl_seconds: int = Field(default=60, ge=0)
 
