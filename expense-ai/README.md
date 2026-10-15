@@ -18,6 +18,8 @@ Phase 1 — service foundation. Implemented:
 - Request-size limits, per-user chat rate limiting, and CORS configuration.
 - An abstract model-provider layer supporting **OpenAI, Claude (Anthropic),
   Mistral, DeepSeek and Gemini**, plus a deterministic `fake` provider.
+- A multi-stage container image and a compose file for local development, plus CI
+  that lints, type-checks and tests both services.
 
 Not implemented yet: the LangGraph workflow, read-only financial tools,
 conversation persistence, and streaming. `/api/v1/chat` and the conversation
@@ -29,6 +31,7 @@ fabricating a response.
 - Python 3.12
 - [uv](https://docs.astral.sh/uv/)
 - The Spring Boot backend reachable (default `http://localhost:9090`)
+- Docker, only if you want the container image
 
 ## Setup
 
@@ -55,11 +58,49 @@ curl http://localhost:8080/health/ready
 
 ```bash
 uv run pytest
+uv run ruff format --check .
 uv run ruff check .
+uv run mypy
 ```
 
 Tests never touch the network: the Spring Boot API is stubbed with an explicit
 `httpx.MockTransport`.
+
+## Docker
+
+The image is built from the pinned `uv.lock`, runs as a non-root user, and needs
+no credentials to start (the default provider is `fake`).
+
+```bash
+docker build -t expense-ai:local .
+
+# or, using the bundled compose file
+docker compose up -d
+curl http://localhost:8080/health/live
+docker compose down
+```
+
+The Spring Boot application is deliberately **not** containerized and keeps
+running on the host. From inside the container it is reached at
+`host.docker.internal:9090`, which compose configures automatically.
+
+If host port `8080` is already in use, override it:
+
+```bash
+EXPENSE_AI_PORT=8081 docker compose up -d
+```
+
+The container health check probes only `/health/live`. `/health/ready` also
+requires a usable model provider, so a missing credential surfaces as
+*not ready* rather than as a restarting container.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs two jobs on pushes to `main` and on pull requests:
+
+- `expense-ai` — `uv sync --frozen`, format check, lint, `mypy`, `pytest`.
+- `backend` — `mvn test` for the existing Spring Boot application, which uses the
+  `test` profile on H2 and needs no external database.
 
 ## Configuration
 
