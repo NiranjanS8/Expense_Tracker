@@ -4,6 +4,8 @@ import com.expensetracker.common.dto.PagedResponse;
 import com.expensetracker.expense.dto.ExpenseQueryParams;
 import com.expensetracker.expense.dto.ExpenseRequest;
 import com.expensetracker.expense.dto.ExpenseResponse;
+import com.expensetracker.expense.dto.ExpenseSummaryParams;
+import com.expensetracker.expense.dto.ExpenseSummaryResponse;
 import com.expensetracker.expense.service.ExpenseCommandService;
 import com.expensetracker.expense.service.ExpenseQueryService;
 import com.expensetracker.user.entity.User;
@@ -68,6 +70,29 @@ public class ExpenseController {
                 maxAmount
         );
         return expenseQueryService.getExpenses(user, queryParams);
+    }
+
+    @GetMapping("/summary")
+    public ExpenseSummaryResponse getExpenseSummary(
+            @AuthenticationPrincipal User user,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) Long categoryId,
+            @RequestParam(required = false) @DecimalMin(value = "0.0", inclusive = true,
+                    message = "minAmount must be zero or greater") BigDecimal minAmount,
+            @RequestParam(required = false) @DecimalMin(value = "0.0", inclusive = true,
+                    message = "maxAmount must be zero or greater") BigDecimal maxAmount,
+            @RequestParam(required = false) String search
+    ) {
+        ExpenseSummaryParams summaryParams = new ExpenseSummaryParams(
+                startDate,
+                endDate,
+                categoryId,
+                minAmount,
+                maxAmount,
+                search
+        );
+        return expenseQueryService.getSummary(user, summaryParams);
     }
 
     @GetMapping("/{expenseId}")

@@ -6,7 +6,10 @@ import com.expensetracker.common.exception.BadRequestException;
 import com.expensetracker.common.exception.ResourceNotFoundException;
 import com.expensetracker.expense.dto.ExpenseQueryParams;
 import com.expensetracker.expense.dto.ExpenseResponse;
+import com.expensetracker.expense.dto.ExpenseSummaryParams;
+import com.expensetracker.expense.dto.ExpenseSummaryResponse;
 import com.expensetracker.expense.entity.Expense;
+import com.expensetracker.expense.repository.ExpenseAggregate;
 import com.expensetracker.expense.repository.ExpenseRepository;
 import com.expensetracker.expense.repository.ExpenseSpecifications;
 import com.expensetracker.user.entity.User;
@@ -83,31 +86,86 @@ public class ExpenseQueryService {
     }
 
     @Transactional(readOnly = true)
+    public ExpenseSummaryResponse getSummary(User user, ExpenseSummaryParams summaryParams) {
+        validateRanges(
+                summaryParams.startDate(),
+                summaryParams.endDate(),
+                summaryParams.minAmount(),
+                summaryParams.maxAmount()
+        );
+        if (summaryParams.categoryId() != null) {
+            categoryService.getAccessibleCategory(summaryParams.categoryId(), user.getId());
+        }
+
+        Specification<Expense> specification = buildSpecification(user.getId(), summaryParams);
+        ExpenseAggregate aggregate = expenseRepository.summarize(specification);
+
+        return new ExpenseSummaryResponse(
+                aggregate.totalAmount(),
+                aggregate.transactionCount(),
+                summaryParams.startDate(),
+                summaryParams.endDate()
+        );
+    }
+
+    @Transactional(readOnly = true)
     public Expense findUserExpense(Long expenseId, Long userId) {
         return expenseRepository.findByIdAndUserId(expenseId, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Expense not found"));
     }
 
     private Specification<Expense> buildSpecification(Long userId, ExpenseQueryParams queryParams) {
+        return buildSpecification(
+                userId,
+                queryParams.categoryId(),
+                queryParams.startDate(),
+                queryParams.endDate(),
+                queryParams.minAmount(),
+                queryParams.maxAmount(),
+                queryParams.search()
+        );
+    }
+
+    private Specification<Expense> buildSpecification(Long userId, ExpenseSummaryParams summaryParams) {
+        return buildSpecification(
+                userId,
+                summaryParams.categoryId(),
+                summaryParams.startDate(),
+                summaryParams.endDate(),
+                summaryParams.minAmount(),
+                summaryParams.maxAmount(),
+                summaryParams.search()
+        );
+    }
+
+    private Specification<Expense> buildSpecification(
+            Long userId,
+            Long categoryId,
+            LocalDate startDate,
+            LocalDate endDate,
+            BigDecimal minAmount,
+            BigDecimal maxAmount,
+            String search
+    ) {
         Specification<Expense> specification = Specification.where(ExpenseSpecifications.hasUserId(userId));
 
-        if (queryParams.categoryId() != null) {
-            specification = specification.and(ExpenseSpecifications.hasCategoryId(queryParams.categoryId()));
+        if (categoryId != null) {
+            specification = specification.and(ExpenseSpecifications.hasCategoryId(categoryId));
         }
-        if (queryParams.startDate() != null) {
-            specification = specification.and(ExpenseSpecifications.expenseDateGreaterThanOrEqualTo(queryParams.startDate()));
+        if (startDate != null) {
+            specification = specification.and(ExpenseSpecifications.expenseDateGreaterThanOrEqualTo(startDate));
         }
-        if (queryParams.endDate() != null) {
-            specification = specification.and(ExpenseSpecifications.expenseDateLessThanOrEqualTo(queryParams.endDate()));
+        if (endDate != null) {
+            specification = specification.and(ExpenseSpecifications.expenseDateLessThanOrEqualTo(endDate));
         }
-        if (queryParams.minAmount() != null) {
-            specification = specification.and(ExpenseSpecifications.amountGreaterThanOrEqualTo(queryParams.minAmount()));
+        if (minAmount != null) {
+            specification = specification.and(ExpenseSpecifications.amountGreaterThanOrEqualTo(minAmount));
         }
-        if (queryParams.maxAmount() != null) {
-            specification = specification.and(ExpenseSpecifications.amountLessThanOrEqualTo(queryParams.maxAmount()));
+        if (maxAmount != null) {
+            specification = specification.and(ExpenseSpecifications.amountLessThanOrEqualTo(maxAmount));
         }
-        if (hasText(queryParams.search())) {
-            specification = specification.and(ExpenseSpecifications.matchesSearchTerm(queryParams.search().trim()));
+        if (hasText(search)) {
+            specification = specification.and(ExpenseSpecifications.matchesSearchTerm(search.trim()));
         }
 
         return specification;
@@ -130,11 +188,15 @@ public class ExpenseQueryService {
     }
 
     private void validateQueryParams(ExpenseQueryParams queryParams) {
-        LocalDate startDate = queryParams.startDate();
-        LocalDate endDate = queryParams.endDate();
-        BigDecimal minAmount = queryParams.minAmount();
-        BigDecimal maxAmount = queryParams.maxAmount();
+        validateRanges(
+                queryParams.startDate(),
+                queryParams.endDate(),
+                queryParams.minAmount(),
+                queryParams.maxAmount()
+        );
+    }
 
+    private void validateRanges(LocalDate startDate, LocalDate endDate, BigDecimal minAmount, BigDecimal maxAmount) {
         if (startDate != null && endDate != null && startDate.isAfter(endDate)) {
             throw new BadRequestException("startDate must be before or equal to endDate");
         }
