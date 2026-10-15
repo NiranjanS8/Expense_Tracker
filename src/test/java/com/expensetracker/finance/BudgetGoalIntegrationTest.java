@@ -1,5 +1,6 @@
 package com.expensetracker.finance;
 
+import com.expensetracker.security.RateLimitService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,8 +38,12 @@ class BudgetGoalIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private RateLimitService rateLimitService;
+
     @BeforeEach
     void setUp() {
+        rateLimitService.clearAll();
         jdbcTemplate.execute("DELETE FROM expenses");
         jdbcTemplate.execute("DELETE FROM recurring_expenses");
         jdbcTemplate.execute("DELETE FROM smart_category_rules");
@@ -238,6 +243,8 @@ class BudgetGoalIntegrationTest {
     void goalStatusShouldBecomeAtRiskWhenCreatedLongAgoWithLowProgress() throws Exception {
         String token = registerAndLogin("atrisk@example.com");
 
+        String targetDate = LocalDate.now().plusMonths(1).toString();
+
         String goalResponse = mockMvc.perform(post("/api/goals")
                         .contextPath("/api")
                         .with(csrf())
@@ -248,9 +255,9 @@ class BudgetGoalIntegrationTest {
                                   "name": "Vacation Fund",
                                   "targetAmount": 50000.00,
                                   "currentAmount": 5000.00,
-                                  "targetDate": "2026-05-15"
+                                  "targetDate": "%s"
                                 }
-                                """))
+                                """.formatted(targetDate)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id", notNullValue()))
                 .andReturn()
@@ -260,7 +267,7 @@ class BudgetGoalIntegrationTest {
         long goalId = extractLongField(goalResponse, "id");
         jdbcTemplate.update(
                 "UPDATE goals SET created_at = ? WHERE id = ?",
-                java.sql.Timestamp.valueOf(LocalDate.of(2026, 1, 1).atStartOfDay()),
+                java.sql.Timestamp.valueOf(LocalDate.now().minusMonths(6).atStartOfDay()),
                 goalId
         );
 

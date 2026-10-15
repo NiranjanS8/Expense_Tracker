@@ -1,4 +1,5 @@
 package com.expensetracker.expense;
+import com.expensetracker.security.RateLimitService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,8 +35,12 @@ class ExpenseCategoryIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private RateLimitService rateLimitService;
+
     @BeforeEach
     void setUp() {
+        rateLimitService.clearAll();
         jdbcTemplate.execute("DELETE FROM expenses");
         jdbcTemplate.execute("DELETE FROM recurring_expenses");
         jdbcTemplate.execute("DELETE FROM smart_category_rules");

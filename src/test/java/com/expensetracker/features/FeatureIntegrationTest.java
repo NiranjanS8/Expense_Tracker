@@ -6,6 +6,8 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -172,10 +174,12 @@ class FeatureIntegrationTest {
                 .andExpect(jsonPath("$.largestExpense.description", equalTo("Cab ride")))
                 .andExpect(jsonPath("$.insights", hasSize(greaterThan(0))));
 
+        String futureMonth = YearMonth.now().plusMonths(1).format(DateTimeFormatter.ofPattern("yyyy-MM"));
+
         mockMvc.perform(get("/api/insights/summary")
                         .contextPath("/api")
                         .header(HttpHeaders.AUTHORIZATION, bearerToken(token))
-                        .param("month", "2026-05"))
+                        .param("month", futureMonth))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", equalTo("Insights cannot be generated for future months")));
     }
