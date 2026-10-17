@@ -10,15 +10,24 @@ Differences from the OpenAI shape that this adapter absorbs:
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any, ClassVar
 
-from app.integrations.model_provider.base import HttpModelProvider, require_api_key
+from app.integrations.model_provider.base import (
+    HttpModelProvider,
+    accumulate_tool_call,
+    assemble_tool_calls,
+    require_api_key,
+)
 from app.integrations.model_provider.types import (
     ChatMessage,
     ChatRequest,
     ChatResponse,
+    Completion,
     FinishReason,
+    ModelStreamChunk,
     Role,
+    TextDelta,
     TokenUsage,
     ToolCall,
     ToolSpec,
@@ -38,12 +47,84 @@ class AnthropicProvider(HttpModelProvider):
     name: ClassVar[str] = "anthropic"
 
     async def complete(self, request: ChatRequest) -> ChatResponse:
-        headers = {
+        body = await self._post_json(
+            "/messages", payload=self._encode_request(request), headers=self._headers()
+        )
+        return _decode_response(body)
+
+    async def stream(self, request: ChatRequest) -> AsyncIterator[ModelStreamChunk]:
+        payload = self._encode_request(request)
+        payload["stream"] = True
+
+        text_parts: list[str] = []
+        partial_blocks: dict[int, dict[str, Any]] = {}
+        prompt_tokens = 0
+        completion_tokens = 0
+        model = self._config.model
+        finish_reason = FinishReason.UNKNOWN
+
+        async for event in self._stream_json("/messages", payload=payload, headers=self._headers()):
+            event_type = event.get("type")
+
+            if event_type == "message_start":
+                message = event.get("message") or {}
+                model = str(message.get("model") or model)
+                prompt_tokens = _as_int((message.get("usage") or {}).get("input_tokens"))
+
+            elif event_type == "content_block_start":
+                block = event.get("content_block") or {}
+                if block.get("type") == "tool_use":
+                    accumulate_tool_call(
+                        partial_blocks,
+                        index=event.get("index"),
+                        call_id=block.get("id"),
+                        name=block.get("name"),
+                    )
+
+            elif event_type == "content_block_delta":
+                delta = event.get("delta") or {}
+                if delta.get("type") == "text_delta":
+                    text = delta.get("text") or ""
+                    if text:
+                        text_parts.append(text)
+                        yield TextDelta(text=text)
+                elif delta.get("type") == "input_json_delta":
+                    accumulate_tool_call(
+                        partial_blocks,
+                        index=event.get("index"),
+                        arguments=delta.get("partial_json"),
+                    )
+
+            elif event_type == "message_delta":
+                usage = event.get("usage") or {}
+                completion_tokens = _as_int(usage.get("output_tokens")) or completion_tokens
+                stop_reason = (event.get("delta") or {}).get("stop_reason")
+                if stop_reason:
+                    finish_reason = _STOP_REASONS.get(str(stop_reason), FinishReason.UNKNOWN)
+
+        yield Completion(
+            response=ChatResponse(
+                provider=self.name,
+                model=model,
+                content="".join(text_parts) or None,
+                tool_calls=assemble_tool_calls(partial_blocks, id_prefix="tool_"),
+                finish_reason=finish_reason,
+                usage=TokenUsage(
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=prompt_tokens + completion_tokens,
+                ),
+            )
+        )
+
+    def _headers(self) -> dict[str, str]:
+        return {
             "x-api-key": require_api_key(self._config),
             "anthropic-version": _ANTHROPIC_VERSION,
             "Content-Type": "application/json",
         }
 
+    def _encode_request(self, request: ChatRequest) -> dict[str, Any]:
         system_prompt, messages = _encode_messages(request.messages)
 
         payload: dict[str, Any] = {
@@ -58,8 +139,11 @@ class AnthropicProvider(HttpModelProvider):
         if request.temperature is not None:
             payload["temperature"] = request.temperature
 
-        body = await self._post_json("/messages", payload=payload, headers=headers)
-        return _decode_response(body)
+        return payload
+
+
+def _as_int(value: Any) -> int:
+    return value if isinstance(value, int) else 0
 
 
 def _encode_messages(messages: list[ChatMessage]) -> tuple[str, list[dict[str, Any]]]:

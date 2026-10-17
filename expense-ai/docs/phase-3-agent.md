@@ -43,9 +43,12 @@ Status: implemented and covered by the automated suite (`uv run pytest`,
   loaded from `messages`; this is what the plan's "conversation memory is not a
   substitute for current facts" requires, and it avoids a second persistence
   mechanism with no current need.
-- **`token` events currently carry the whole answer.** Providers complete
-  non-streaming; the event contract is stable so provider-level streaming can be
-  added without changing the API.
+- **`token` events stream and are provisional.** Each adapter decodes its
+  provider's own stream format, reassembling tool-call arguments that arrive in
+  fragments. `message_complete.content` stays authoritative: a grounded draft
+  that policy later replaces is retracted there, so clients reconcile to that
+  value rather than concatenating deltas. Prose from an ungrounded planning call
+  is never published, so invented figures cannot appear even transiently.
 - **Ambiguity handling for data questions is deterministic.** Because a data
   question may only be answered from tool results, the model cannot emit a
   free-form clarifying question for one; the user instead receives a short
@@ -57,5 +60,4 @@ Status: implemented and covered by the automated suite (`uv run pytest`,
 - LangGraph PostgreSQL checkpointing, if interrupt/resume is ever needed.
 - A retention/cleanup policy for stored conversations (deletion is supported per
   conversation; automation is not).
-- Provider-level token streaming.
 - A shared rate-limit store before horizontal scaling.

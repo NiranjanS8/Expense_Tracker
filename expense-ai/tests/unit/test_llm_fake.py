@@ -8,6 +8,7 @@ from app.integrations.model_provider.types import (
     FinishReason,
     Role,
 )
+from tests.conftest import final_response, streamed_text
 
 
 async def test_fake_provider_echoes_last_user_message_when_unscripted() -> None:
@@ -33,4 +34,16 @@ async def test_fake_provider_returns_scripted_responses_in_order() -> None:
     response = await provider.complete(ChatRequest(messages=[ChatMessage(role=Role.USER, content="hi")]))
 
     assert response is scripted
+    assert len(provider.calls) == 1
+
+
+async def test_fake_provider_streams_the_answer_in_pieces_that_rejoin_exactly() -> None:
+    provider = FakeModelProvider()
+    request = ChatRequest(messages=[ChatMessage(role=Role.USER, content="How are my goals?")])
+
+    chunks = [chunk async for chunk in provider.stream(request)]
+
+    assert "".join(streamed_text(chunks)) == "[fake] How are my goals?"
+    assert len(streamed_text(chunks)) > 1
+    assert final_response(chunks).content == "[fake] How are my goals?"
     assert len(provider.calls) == 1

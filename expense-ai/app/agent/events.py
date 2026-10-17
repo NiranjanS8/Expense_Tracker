@@ -2,6 +2,12 @@
 
 The payloads are stable and deliberately small. No event carries a bearer token,
 an internal tool argument, a stack trace, or another user's identifier.
+
+``token`` deltas are provisional: they arrive as the model produces them, while
+``message_complete.content`` is the authoritative answer. A client must reconcile
+to that value rather than assume the deltas always concatenate to it, because a
+grounded draft that turns out to be superseded is retracted there. A turn that
+never streamed sends its whole answer as a single ``token`` instead.
 """
 
 from __future__ import annotations

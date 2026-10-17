@@ -12,9 +12,12 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from typing import Any
 
+from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
+from app.agent.events import token
 from app.agent.policies import DATA_INTENT, classify_intent
 from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.state import AgentContext, AgentState
@@ -26,8 +29,10 @@ from app.integrations.model_provider import (
     ChatMessage,
     ChatRequest,
     ChatResponse,
+    Completion,
     ModelProvider,
     ProviderError,
+    ProviderInvalidResponseError,
     Role,
     ToolSpec,
 )
@@ -107,9 +112,18 @@ class AgentNodes:
         if provider is None:
             return _model_failure("model_unavailable")
 
+        # A planning call that is composing from retrieved figures produces the
+        # user's answer, so its prose may be published as it arrives. The first
+        # call's prose would be an ungrounded guess that policy replaces with a
+        # refusal, so it is never published.
+        composing_from_data = state.get("intent") == DATA_INTENT and bool(state.get("tool_result_json"))
+
         try:
             response = await self._complete(
-                provider, self._chat_request(state["working"], tools=list(self._tool_specs)), node="plan"
+                provider,
+                self._chat_request(state["working"], tools=list(self._tool_specs)),
+                node="plan",
+                publish_stream=composing_from_data,
             )
         except ProviderError:
             logger.warning("event=agent_model_error node=plan")
@@ -128,7 +142,13 @@ class AgentNodes:
         content = (response.content or "").strip()
         working.append(ChatMessage(role=Role.ASSISTANT, content=content))
         if content:
-            return {"working": working, "tool_call": None, "answer": content, "termination": "answered"}
+            return {
+                "working": working,
+                "tool_call": None,
+                "answer": content,
+                "answer_streamed": composing_from_data,
+                "termination": "answered",
+            }
         return {"working": working, "tool_call": None, "answer": None}
 
     async def validate_arguments(self, state: AgentState, runtime: Runtime[AgentContext]) -> AgentState:
@@ -222,7 +242,10 @@ class AgentNodes:
 
         try:
             response = await self._complete(
-                provider, self._chat_request(state["working"], tools=[]), node="compose_answer"
+                provider,
+                self._chat_request(state["working"], tools=[]),
+                node="compose_answer",
+                publish_stream=True,
             )
         except ProviderError:
             logger.warning("event=agent_model_error node=compose_answer")
@@ -231,7 +254,7 @@ class AgentNodes:
         content = (response.content or "").strip()
         if not content:
             return {"answer": _NO_ANSWER, "termination": "no_answer", "error_code": "empty_model_response"}
-        return {"answer": content, "termination": "answered"}
+        return {"answer": content, "answer_streamed": True, "termination": "answered"}
 
     async def persist_and_trace(self, state: AgentState, runtime: Runtime[AgentContext]) -> AgentState:
         context = runtime.context
@@ -273,11 +296,20 @@ class AgentNodes:
         request: ChatRequest,
         *,
         node: str,
+        publish_stream: bool = False,
     ) -> ChatResponse:
-        """Call the model once, recording latency, token usage and estimated cost."""
+        """Call the model once, recording latency, token usage and estimated cost.
+
+        With ``publish_stream`` the answer is forwarded to the caller as it is
+        produced. The response is assembled identically either way, so routing and
+        persistence cannot tell the two apart.
+        """
         started = time.perf_counter()
         try:
-            response = await provider.complete(request)
+            if publish_stream:
+                response = await self._publish_stream(provider, request)
+            else:
+                response = await provider.complete(request)
         except ProviderError:
             metrics.record_model_call(
                 provider=provider.name,
@@ -307,9 +339,35 @@ class AgentNodes:
         )
         return response
 
+    async def _publish_stream(self, provider: ModelProvider, request: ChatRequest) -> ChatResponse:
+        """Stream one completion, forwarding text deltas as they arrive."""
+        writer = _stream_writer()
+        async for chunk in provider.stream(request):
+            if isinstance(chunk, Completion):
+                return chunk.response
+            writer(token(text=chunk.text))
+
+        raise ProviderInvalidResponseError(f"{provider.name} ended its stream without a completion")
+
 
 def _model_failure(code: str) -> AgentState:
     return {"tool_call": None, "answer": None, "error_code": code, "termination": "model_error"}
+
+
+def _stream_writer() -> Callable[[Any], None]:
+    """The current run's event writer, or a no-op when there is no run.
+
+    Nodes are also called directly in tests, where nothing is listening for
+    streamed deltas and the answer simply arrives with the final state.
+    """
+    try:
+        return get_stream_writer()
+    except RuntimeError:
+        return _discard_event
+
+
+def _discard_event(_event: Any) -> None:
+    return None
 
 
 def _tool_message(tool_call_id: str, name: str, payload: str | dict[str, str]) -> ChatMessage:

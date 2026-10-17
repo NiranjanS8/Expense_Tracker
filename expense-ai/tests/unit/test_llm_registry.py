@@ -25,7 +25,7 @@ def test_all_requested_providers_are_supported() -> None:
 
 def build_settings(provider: ProviderName, **overrides: object) -> Settings:
     """Build settings deterministically, bypassing the environment."""
-    return Settings.model_validate({"llm_provider": provider, **overrides})
+    return Settings.model_validate({"_env_file": None, "llm_provider": provider, **overrides})
 
 
 @pytest.mark.parametrize(

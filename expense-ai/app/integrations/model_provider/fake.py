@@ -6,17 +6,22 @@ recent user message prefixed with ``[fake]``, which is obviously synthetic.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import ClassVar
 
 from app.integrations.model_provider.base import ModelProvider, ProviderConfig
 from app.integrations.model_provider.types import (
     ChatRequest,
     ChatResponse,
+    Completion,
     FinishReason,
+    ModelStreamChunk,
     Role,
+    TextDelta,
     TokenUsage,
 )
+
+_STREAM_CHUNK_SIZE = 12
 
 
 class FakeModelProvider(ModelProvider):
@@ -48,3 +53,15 @@ class FakeModelProvider(ModelProvider):
             finish_reason=FinishReason.STOP,
             usage=TokenUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0),
         )
+
+    async def stream(self, request: ChatRequest) -> AsyncIterator[ModelStreamChunk]:
+        """Deliver the answer in pieces, so the incremental path is exercised.
+
+        The pieces always rejoin to the completion exactly, as a real provider's
+        deltas do.
+        """
+        response = await self.complete(request)
+        content = response.content or ""
+        for start in range(0, len(content), _STREAM_CHUNK_SIZE):
+            yield TextDelta(text=content[start : start + _STREAM_CHUNK_SIZE])
+        yield Completion(response=response)

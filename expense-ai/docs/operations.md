@@ -98,5 +98,4 @@ persists nothing.
 
 - An automated retention/cleanup policy for stored conversations.
 - A shared rate-limit store (Redis) before horizontal scaling.
-- Provider-level token streaming, so `token` events are incremental.
 - LangGraph checkpointing, only if interrupt/resume is ever needed.

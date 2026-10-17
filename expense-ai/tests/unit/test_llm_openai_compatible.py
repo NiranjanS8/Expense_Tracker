@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from typing import Any
 
 import httpx
 import pytest
@@ -24,6 +25,7 @@ from app.integrations.model_provider.types import (
     Role,
     ToolSpec,
 )
+from tests.conftest import final_response, sse_body, streamed_text
 
 Responder = Callable[[httpx.Request], httpx.Response]
 
@@ -196,3 +198,95 @@ async def test_exhausted_retries_surface_unavailable() -> None:
 
     with pytest.raises(ProviderUnavailableError):
         await build_provider(responder, max_retries=1).complete(ChatRequest(messages=[]))
+
+
+def _stream_responder(*events: dict[str, Any] | str) -> Responder:
+    body = sse_body(*events)
+
+    def responder(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body)
+
+    return responder
+
+
+async def test_openai_streams_content_deltas_then_the_assembled_response() -> None:
+    responder = _stream_responder(
+        {"model": "gpt-4o-mini", "choices": [{"delta": {"role": "assistant", "content": ""}}]},
+        {"choices": [{"delta": {"content": "You spent "}}]},
+        {"choices": [{"delta": {"content": "120.00."}}]},
+        {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+        "[DONE]",
+    )
+
+    chunks = [chunk async for chunk in build_provider(responder).stream(ChatRequest(messages=[]))]
+
+    assert streamed_text(chunks) == ["You spent ", "120.00."]
+    assert final_response(chunks).content == "You spent 120.00."
+    assert final_response(chunks).finish_reason is FinishReason.STOP
+
+
+async def test_openai_reassembles_tool_call_arguments_split_across_events() -> None:
+    # The arguments JSON arrives in two fragments that only parse once joined.
+    opening_fragment = '{"mon'
+    closing_fragment = 'th": "2026-04"}'
+
+    responder = _stream_responder(
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_1",
+                                "function": {"name": "get_budget_status", "arguments": ""},
+                            }
+                        ]
+                    }
+                }
+            ]
+        },
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": opening_fragment}}]}}]},
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": closing_fragment}}]}}]},
+        {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
+    )
+
+    chunks = [chunk async for chunk in build_provider(responder).stream(ChatRequest(messages=[]))]
+
+    response = final_response(chunks)
+    assert streamed_text(chunks) == []
+    assert response.tool_calls[0].id == "call_1"
+    assert response.tool_calls[0].name == "get_budget_status"
+    assert response.tool_calls[0].arguments == {"month": "2026-04"}
+    assert response.finish_reason is FinishReason.TOOL_CALLS
+
+
+async def test_openai_reads_usage_from_the_last_stream_event() -> None:
+    responder = _stream_responder(
+        {"choices": [{"delta": {"content": "ok"}}]},
+        {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+        {"choices": [], "usage": {"prompt_tokens": 7, "completion_tokens": 2, "total_tokens": 9}},
+    )
+
+    chunks = [chunk async for chunk in build_provider(responder).stream(ChatRequest(messages=[]))]
+
+    assert final_response(chunks).usage.total_tokens == 9
+
+
+async def test_stream_usage_is_only_requested_where_the_endpoint_accepts_it() -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, content=sse_body({"choices": [{"delta": {}, "finish_reason": "stop"}]}))
+
+    for provider_type in (OpenAiProvider, MistralProvider):
+        async for _ in build_provider(responder, provider_type=provider_type).stream(
+            ChatRequest(messages=[])
+        ):
+            pass
+
+    assert bodies[0]["stream"] is True
+    assert bodies[0]["stream_options"] == {"include_usage": True}
+    assert bodies[1]["stream"] is True
+    assert "stream_options" not in bodies[1]

@@ -15,6 +15,7 @@ from app.integrations.model_provider.types import (
     ToolCall,
     ToolSpec,
 )
+from tests.conftest import final_response, sse_body, streamed_text
 
 Responder = Callable[[httpx.Request], httpx.Response]
 
@@ -134,3 +135,86 @@ async def test_anthropic_decodes_tool_use_blocks_and_usage() -> None:
     assert response.tool_calls[0].name == "get_recurring_expenses"
     assert response.finish_reason is FinishReason.TOOL_CALLS
     assert response.usage.total_tokens == 20
+
+
+async def test_anthropic_streams_text_deltas_and_usage() -> None:
+    def responder(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=sse_body(
+                {
+                    "type": "message_start",
+                    "message": {
+                        "model": "claude-3-5-haiku-latest",
+                        "usage": {"input_tokens": 12},
+                    },
+                },
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "You spent "},
+                },
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "120.00."},
+                },
+                {"type": "content_block_stop", "index": 0},
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": "end_turn"},
+                    "usage": {"output_tokens": 6},
+                },
+                {"type": "message_stop"},
+            ),
+        )
+
+    chunks = [chunk async for chunk in build_provider(responder).stream(ChatRequest(messages=[]))]
+
+    assert streamed_text(chunks) == ["You spent ", "120.00."]
+    assert final_response(chunks).content == "You spent 120.00."
+    assert final_response(chunks).usage.total_tokens == 18
+    assert final_response(chunks).finish_reason is FinishReason.STOP
+
+
+async def test_anthropic_reassembles_tool_use_input_split_across_events() -> None:
+    def responder(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=sse_body(
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {
+                        "type": "tool_use",
+                        "id": "toolu_9",
+                        "name": "get_recurring_expenses",
+                        "input": {},
+                    },
+                },
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "input_json_delta", "partial_json": '{"month"'},
+                },
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "input_json_delta", "partial_json": ': "2026-04"}'},
+                },
+                {"type": "message_delta", "delta": {"stop_reason": "tool_use"}},
+            ),
+        )
+
+    chunks = [chunk async for chunk in build_provider(responder).stream(ChatRequest(messages=[]))]
+
+    response = final_response(chunks)
+    assert response.tool_calls[0].id == "toolu_9"
+    assert response.tool_calls[0].name == "get_recurring_expenses"
+    assert response.tool_calls[0].arguments == {"month": "2026-04"}
+    assert response.finish_reason is FinishReason.TOOL_CALLS

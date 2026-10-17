@@ -104,7 +104,7 @@ The response is `text/event-stream` with typed events:
 | --- | --- |
 | `message_start` | `{ conversationId }` |
 | `status` | `{ stage, tool? }` — e.g. `planning`, `retrieving` |
-| `token` | `{ text }` — the answer text |
+| `token` | `{ text }` — a fragment of the answer as the model produces it |
 | `message_complete` | `{ conversationId, messageId, content, termination, toolCalls }` |
 | `error` | `{ code, message, correlationId }` |
 
@@ -112,9 +112,14 @@ Authentication and conversation ownership are resolved *before* the stream opens
 so `401`/`404` arrive as normal JSON responses. Events never contain prompts,
 tokens, stack traces, or internal tool arguments.
 
-> Current limitation: the model providers complete non-streaming, so `token`
-> carries the whole answer as one event followed by `message_complete`. The event
-> contract is stable; true token-by-token streaming is a provider-level follow-up.
+Every adapter decodes its provider's own stream format, reassembling tool-call
+arguments that arrive in fragments, so answers arrive as they are written.
+
+> Deltas are provisional: `message_complete.content` is the authoritative answer
+> and must replace whatever was streamed, because a turn the policy replaces is
+> retracted there. A turn that produces no deltas sends its whole answer as a
+> single `token` instead. Prose from an ungrounded planning call is never
+> published at all, so invented figures cannot appear even transiently.
 
 ## The workflow
 
@@ -315,8 +320,13 @@ User identity is never taken from chat text, request bodies, or tool arguments.
 - `/health/ready` validates configuration and pings the AI database; it does not
   probe Spring Boot, so a Java restart cannot flap this service's readiness.
 - Readiness requires the selected provider's credential to be present.
-- `token` events carry the whole answer (see *Streaming events*); genuine
-  token-by-token streaming needs provider-level streaming support.
+- `token` deltas are provisional (see *Streaming events*): a client must
+  reconcile to `message_complete.content` rather than assume the deltas always
+  concatenate to it.
+- Token and cost metrics for a streamed call come from the provider's own usage
+  reporting. OpenAI and DeepSeek are asked for it explicitly; Mistral's endpoint
+  is not sent that option, because an unsupported field would fail the request,
+  so its streamed usage is recorded only if the provider sends it anyway.
 - For a data question the model may only answer from tool results, so an
   ambiguous data question is met with a deterministic "rephrase with a period"
   refusal rather than a model-written clarifying question.

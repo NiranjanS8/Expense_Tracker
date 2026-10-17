@@ -7,6 +7,7 @@ formats (OpenAI ``tools``, Anthropic ``tool_use`` blocks, Gemini
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
@@ -70,3 +71,21 @@ class ChatResponse(BaseModel):
     tool_calls: list[ToolCall] = Field(default_factory=list)
     finish_reason: FinishReason = FinishReason.STOP
     usage: TokenUsage = Field(default_factory=TokenUsage)
+
+
+@dataclass(frozen=True, slots=True)
+class TextDelta:
+    """A content increment a caller may forward before the completion is assembled."""
+
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class Completion:
+    """The assembled completion. Always the final item of a stream."""
+
+    response: ChatResponse
+
+
+# A provider yields zero or more deltas, then exactly one completion.
+ModelStreamChunk = TextDelta | Completion

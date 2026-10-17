@@ -88,13 +88,21 @@ class ChatService:
         final: dict[str, Any] = {}
 
         try:
-            async for update in self._graph.astream(
+            async for mode, payload in self._graph.astream(
                 AgentState(user_message=message),
                 context=agent_context,
-                stream_mode="updates",
+                stream_mode=["updates", "custom"],
                 config={"recursion_limit": self._settings.agent_recursion_limit},
             ):
-                for node, partial in update.items():
+                if mode == "custom":
+                    # A node published a streamed delta for the caller to forward.
+                    if isinstance(payload, StreamEvent):
+                        yield payload
+                    continue
+
+                if not isinstance(payload, dict):
+                    continue
+                for node, partial in payload.items():
                     if isinstance(partial, dict):
                         final.update(partial)
                     event = _progress_event(node, partial)
@@ -133,7 +141,11 @@ class ChatService:
             )
             return
 
-        yield token(text=answer)
+        # Streamed deltas are provisional; a turn whose answer was published that
+        # way is not repeated here. ``message_complete`` carries the authoritative
+        # content either way.
+        if not final.get("answer_streamed"):
+            yield token(text=answer)
         yield message_complete(
             conversation_id=conversation.id,
             message_id=_as_message_id(final.get("answer_message_id")),

@@ -12,6 +12,7 @@ Differences this adapter absorbs:
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any, ClassVar
 
 from app.integrations.model_provider.base import HttpModelProvider, require_api_key
@@ -19,8 +20,11 @@ from app.integrations.model_provider.types import (
     ChatMessage,
     ChatRequest,
     ChatResponse,
+    Completion,
     FinishReason,
+    ModelStreamChunk,
     Role,
+    TextDelta,
     TokenUsage,
     ToolCall,
     ToolSpec,
@@ -38,11 +42,70 @@ class GeminiProvider(HttpModelProvider):
     name: ClassVar[str] = "gemini"
 
     async def complete(self, request: ChatRequest) -> ChatResponse:
-        headers = {
+        body = await self._post_json(
+            f"/models/{self._config.model}:generateContent",
+            payload=self._encode_request(request),
+            headers=self._headers(),
+        )
+        return _decode_response(body)
+
+    async def stream(self, request: ChatRequest) -> AsyncIterator[ModelStreamChunk]:
+        text_parts: list[str] = []
+        function_calls: list[dict[str, Any]] = []
+        usage = TokenUsage()
+        model = self._config.model
+        finish_reason = FinishReason.UNKNOWN
+
+        async for event in self._stream_json(
+            f"/models/{self._config.model}:streamGenerateContent?alt=sse",
+            payload=self._encode_request(request),
+            headers=self._headers(),
+        ):
+            if event.get("modelVersion"):
+                model = str(event["modelVersion"])
+            if event.get("usageMetadata"):
+                usage = _decode_usage(event["usageMetadata"])
+
+            for candidate in event.get("candidates") or []:
+                for part in (candidate.get("content") or {}).get("parts") or []:
+                    text = part.get("text")
+                    if text:
+                        text_parts.append(text)
+                        yield TextDelta(text=text)
+                    if "functionCall" in part:
+                        function_calls.append(part["functionCall"] or {})
+                if candidate.get("finishReason"):
+                    finish_reason = _FINISH_REASONS.get(candidate["finishReason"], FinishReason.UNKNOWN)
+
+        tool_calls = [
+            ToolCall(
+                id=f"gemini_call_{index}",
+                name=str(call.get("name", "")),
+                arguments=call.get("args") if isinstance(call.get("args"), dict) else {},
+            )
+            for index, call in enumerate(function_calls)
+        ]
+        if tool_calls:
+            finish_reason = FinishReason.TOOL_CALLS
+
+        yield Completion(
+            response=ChatResponse(
+                provider=self.name,
+                model=model,
+                content="".join(text_parts) or None,
+                tool_calls=tool_calls,
+                finish_reason=finish_reason,
+                usage=usage,
+            )
+        )
+
+    def _headers(self) -> dict[str, str]:
+        return {
             "x-goog-api-key": require_api_key(self._config),
             "Content-Type": "application/json",
         }
 
+    def _encode_request(self, request: ChatRequest) -> dict[str, Any]:
         system_prompt, contents = _encode_contents(request.messages)
         payload: dict[str, Any] = {"contents": contents}
         if system_prompt:
@@ -55,12 +118,7 @@ class GeminiProvider(HttpModelProvider):
             generation_config["temperature"] = request.temperature
         payload["generationConfig"] = generation_config
 
-        body = await self._post_json(
-            f"/models/{self._config.model}:generateContent",
-            payload=payload,
-            headers=headers,
-        )
-        return _decode_response(body)
+        return payload
 
 
 def _encode_contents(messages: list[ChatMessage]) -> tuple[str, list[dict[str, Any]]]:
@@ -137,9 +195,7 @@ def _decode_response(body: dict[str, Any]) -> ChatResponse:
     else:
         finish_reason = _FINISH_REASONS.get(candidate.get("finishReason") or "", FinishReason.UNKNOWN)
 
-    usage = body.get("usageMetadata") or {}
-    prompt_tokens = usage.get("promptTokenCount", 0)
-    completion_tokens = usage.get("candidatesTokenCount", 0)
+    usage = _decode_usage(body.get("usageMetadata") or {})
 
     return ChatResponse(
         provider="gemini",
@@ -147,9 +203,15 @@ def _decode_response(body: dict[str, Any]) -> ChatResponse:
         content=text or None,
         tool_calls=tool_calls,
         finish_reason=finish_reason,
-        usage=TokenUsage(
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=usage.get("totalTokenCount", prompt_tokens + completion_tokens),
-        ),
+        usage=usage,
+    )
+
+
+def _decode_usage(metadata: dict[str, Any]) -> TokenUsage:
+    prompt_tokens = metadata.get("promptTokenCount", 0)
+    completion_tokens = metadata.get("candidatesTokenCount", 0)
+    return TokenUsage(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=metadata.get("totalTokenCount", prompt_tokens + completion_tokens),
     )

@@ -205,8 +205,10 @@ docker compose -f compose.staging.yaml exec -T financial-db \
   limiter first — see `expense-ai/docs/phase-4-hardening.md`.
 - TLS, managed secrets and a log/metrics pipeline are configured outside this
   stack on purpose; the compose file is not a production topology by itself.
-- Assistant answers stream as a single `token` event because the provider
-  adapters are non-streaming; the UI handles incremental tokens already, so
-  enabling provider streaming later needs no frontend change.
+- Assistant answers stream token by token, but `token` events are provisional:
+  clients must reconcile to `message_complete.content`, which is authoritative.
+  The chat UI already does this.
+- Token and cost metrics for a streamed call depend on the provider reporting
+  usage; a provider that omits it is recorded as zero rather than estimated.
 - `frontend/nginx.conf` resolves the upstream names `backend` and `expense-ai` at
   startup, so the service names in `compose.staging.yaml` are part of the contract.

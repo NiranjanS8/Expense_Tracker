@@ -8,7 +8,7 @@ responds and tests never touch the network.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from types import TracebackType
 from typing import Any
 
@@ -24,7 +24,14 @@ from app.core.security import AccessToken
 from app.identity.introspection import IdentityResolver
 from app.identity.user_context import UserContext
 from app.integrations.expense_tracker_client import AuthenticatedUser, ExpenseTrackerClient
-from app.integrations.model_provider import ChatResponse, FakeModelProvider, ModelProvider
+from app.integrations.model_provider import (
+    ChatResponse,
+    Completion,
+    FakeModelProvider,
+    ModelProvider,
+    ModelStreamChunk,
+    TextDelta,
+)
 from app.main import create_app
 from app.observability.metrics import reset_metrics
 
@@ -52,6 +59,28 @@ def parse_sse(body: str) -> list[tuple[str, dict[str, Any]]]:
         if name is not None:
             events.append((name, data))
     return events
+
+
+def sse_body(*events: dict[str, Any] | str) -> bytes:
+    """Encode provider stream events as SSE: the mirror of :func:`parse_sse`.
+
+    Pass a dictionary for a JSON event and a string for a raw line such as the
+    ``[DONE]`` sentinel.
+    """
+    blocks = [f"data: {event if isinstance(event, str) else json.dumps(event)}\n\n" for event in events]
+    return "".join(blocks).encode()
+
+
+def streamed_text(chunks: Sequence[ModelStreamChunk]) -> list[str]:
+    """The text deltas a provider stream produced, in order."""
+    return [chunk.text for chunk in chunks if isinstance(chunk, TextDelta)]
+
+
+def final_response(chunks: Sequence[ModelStreamChunk]) -> ChatResponse:
+    """The assembled completion that must end every provider stream."""
+    last = chunks[-1]
+    assert isinstance(last, Completion), f"stream ended with {type(last).__name__}"
+    return last.response
 
 
 def build_user_context(*, user_id: int = 1, token: str = "token-1") -> UserContext:

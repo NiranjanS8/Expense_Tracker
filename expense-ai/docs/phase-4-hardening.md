@@ -57,7 +57,6 @@ Status: implemented and covered by the automated suite (`uv run pytest`,
 ## Open items
 
 - A model-backed evaluation run (quality, latency and cost) outside CI.
-- Provider-level token streaming, so `token` events are incremental.
 - A shared rate-limit store before horizontal scaling.
 - An automated retention/cleanup policy for stored conversations.
 - Load and soak testing against a real environment to set performance targets.

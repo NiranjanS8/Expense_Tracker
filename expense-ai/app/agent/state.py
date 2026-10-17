@@ -29,6 +29,9 @@ class AgentState(TypedDict, total=False):
     tool_error: str | None
     answer: str | None
     answer_message_id: int | None
+    # Set when the answer was already published as stream deltas, so the
+    # orchestrator does not send it a second time.
+    answer_streamed: bool
     termination: str
     error_code: str | None
 

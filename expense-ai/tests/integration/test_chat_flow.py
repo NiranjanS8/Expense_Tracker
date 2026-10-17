@@ -222,3 +222,46 @@ def test_upstream_failure_is_reported_without_inventing_a_total(harness: Harness
 
     assert complete["toolCalls"] == ["get_spending_summary"]
     assert "won't guess" in str(complete["content"])
+
+
+def _deltas(body: str) -> list[str]:
+    return [str(data["text"]) for name, data in parse_sse(body) if name == "token"]
+
+
+def test_the_grounded_answer_arrives_incrementally(harness: Harness) -> None:
+    harness.respond_from(_upstream_responder())
+    harness.script_model(
+        _tool_call("get_spending_summary", {"start_date": "2026-10-01", "end_date": "2026-10-31"}),
+        _answer("You spent 120.00 across 4 transactions in October."),
+    )
+
+    response = _post(harness, "How much did I spend this month?")
+
+    deltas = _deltas(response.text)
+    assert len(deltas) > 1
+    assert "".join(deltas) == "You spent 120.00 across 4 transactions in October."
+    assert _complete(response.text)["content"] == "You spent 120.00 across 4 transactions in October."
+
+
+def test_a_conversational_turn_arrives_incrementally(harness: Harness) -> None:
+    harness.respond_from(_upstream_responder())
+    harness.script_model(_answer("Hello, I can help with your expenses."))
+
+    deltas = _deltas(_post(harness, "Hello there").text)
+
+    assert len(deltas) > 1
+    assert "".join(deltas) == "Hello, I can help with your expenses."
+
+
+def test_a_data_question_answered_from_memory_is_never_streamed(harness: Harness) -> None:
+    harness.respond_from(_upstream_responder())
+    # The model answered a data question without retrieving anything: invented figures.
+    harness.script_model(_answer("You spent 999.99 on nothing in particular."))
+
+    response = _post(harness, "How much did I spend this month?")
+
+    complete = _complete(response.text)
+    # Not as a delta, and not in the final content.
+    assert "999.99" not in response.text
+    assert "can't answer it reliably" in str(complete["content"])
+    assert _deltas(response.text) == [complete["content"]]

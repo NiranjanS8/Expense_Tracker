@@ -14,6 +14,7 @@ from app.integrations.model_provider.types import (
     Role,
     ToolSpec,
 )
+from tests.conftest import final_response, sse_body, streamed_text
 
 Responder = Callable[[httpx.Request], httpx.Response]
 
@@ -112,3 +113,68 @@ async def test_gemini_decodes_function_calls_with_synthetic_ids() -> None:
     assert response.tool_calls[0].id
     assert response.finish_reason is FinishReason.TOOL_CALLS
     assert response.usage.total_tokens == 13
+
+
+async def test_gemini_streams_parts_from_an_sse_stream() -> None:
+    captured: dict[str, str] = {}
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        return httpx.Response(
+            200,
+            content=sse_body(
+                {"candidates": [{"content": {"parts": [{"text": "You spent "}]}}]},
+                {"candidates": [{"content": {"parts": [{"text": "120.00."}]}, "finishReason": "STOP"}]},
+                {
+                    "usageMetadata": {
+                        "promptTokenCount": 9,
+                        "candidatesTokenCount": 4,
+                        "totalTokenCount": 13,
+                    }
+                },
+            ),
+        )
+
+    chunks = [chunk async for chunk in build_provider(responder).stream(ChatRequest(messages=[]))]
+
+    assert captured["url"] == (
+        "https://gemini.test/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse"
+    )
+    assert streamed_text(chunks) == ["You spent ", "120.00."]
+    assert final_response(chunks).content == "You spent 120.00."
+    assert final_response(chunks).usage.total_tokens == 13
+    assert final_response(chunks).finish_reason is FinishReason.STOP
+
+
+async def test_gemini_streams_function_calls_with_synthetic_ids() -> None:
+    def responder(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=sse_body(
+                {
+                    "candidates": [
+                        {
+                            "content": {
+                                "parts": [
+                                    {
+                                        "functionCall": {
+                                            "name": "get_budget_status",
+                                            "args": {"month": "2026-04"},
+                                        }
+                                    }
+                                ]
+                            },
+                            "finishReason": "STOP",
+                        }
+                    ]
+                }
+            ),
+        )
+
+    chunks = [chunk async for chunk in build_provider(responder).stream(ChatRequest(messages=[]))]
+
+    response = final_response(chunks)
+    assert response.tool_calls[0].id
+    assert response.tool_calls[0].name == "get_budget_status"
+    assert response.tool_calls[0].arguments == {"month": "2026-04"}
+    assert response.finish_reason is FinishReason.TOOL_CALLS
