@@ -5,11 +5,13 @@ import {
   LogOut,
   Menu,
   Receipt,
+  Sparkles,
   Target,
   Wallet,
   X,
   Zap,
 } from "lucide-react";
+import AssistantSection from "./components/AssistantSection";
 import AuthScreen from "./components/AuthScreen";
 import AutomationSection from "./components/AutomationSection";
 import BudgetsSection from "./components/BudgetsSection";
@@ -42,6 +44,7 @@ const sections = [
   { id: "goals", label: "Goals", icon: Target },
   { id: "automation", label: "Automation", icon: Zap },
   { id: "reports", label: "Reports", icon: FileText },
+  { id: "assistant", label: "Assistant", icon: Sparkles },
 ];
 
 export default function App() {
@@ -199,6 +202,10 @@ export default function App() {
   }
 
   async function loadSection(sectionId) {
+    if (sectionId === "assistant") {
+      // The assistant loads its own conversations and messages.
+      return;
+    }
     if (sectionId === "overview" || sectionId === "expenses") {
       await loadOverview();
       return;
@@ -745,6 +752,13 @@ export default function App() {
             emailMessage={emailMessage}
             emailError={emailError}
             exportTypes={exportTypes}
+          />
+        )}
+
+        {activeSection === "assistant" && (
+          <AssistantSection
+            token={token}
+            onUnauthorized={() => logout("Your session expired. Please log in again.")}
           />
         )}
       </section>

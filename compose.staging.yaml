@@ -1,0 +1,117 @@
+# Staging stack for the read-only assistant.
+#
+#   cp .env.staging.example .env.staging
+#   docker compose -f compose.staging.yaml --env-file .env.staging up --build
+#
+# Four services on one network. The SPA is the only published port; it proxies
+# /api to Spring Boot and /ai to the assistant, so the browser stays on a single
+# origin and neither backend service needs a public port or a CORS exception.
+#
+# Deployment steps, TLS, secrets and monitoring are in docs/deployment.md.
+
+name: expense-tracker-staging
+
+services:
+  financial-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${FINANCIAL_DB_NAME:-expense_tracker}
+      POSTGRES_USER: ${FINANCIAL_DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${FINANCIAL_DB_PASSWORD:?FINANCIAL_DB_PASSWORD is required}
+    volumes:
+      - financial-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend.Dockerfile
+    environment:
+      DB_URL: jdbc:postgresql://financial-db:5432/${FINANCIAL_DB_NAME:-expense_tracker}
+      DB_USERNAME: ${FINANCIAL_DB_USERNAME:-postgres}
+      DB_PASSWORD: ${FINANCIAL_DB_PASSWORD:?FINANCIAL_DB_PASSWORD is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JPA_DDL_AUTO: ${JPA_DDL_AUTO:-update}
+      APP_SEED_ENABLED: ${APP_SEED_ENABLED:-true}
+    depends_on:
+      financial-db:
+        condition: service_healthy
+    # Actuator health is authenticated, so this probe is a plain TCP connect:
+    # the port only accepts connections once the context has started.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9090"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+    restart: unless-stopped
+
+  ai-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${AI_DB_NAME:-expense_ai}
+      POSTGRES_USER: ${AI_DB_USERNAME:-expense_ai}
+      POSTGRES_PASSWORD: ${AI_DB_PASSWORD:?AI_DB_PASSWORD is required}
+    volumes:
+      - ai-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  expense-ai:
+    build:
+      context: ./expense-ai
+    # Alembic owns the assistant's schema, so migrate before serving traffic.
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8080
+    environment:
+      APP_ENV: staging
+      DATABASE_URL: postgresql+asyncpg://${AI_DB_USERNAME:-expense_ai}:${AI_DB_PASSWORD:?AI_DB_PASSWORD is required}@ai-db:5432/${AI_DB_NAME:-expense_ai}
+      EXPENSE_TRACKER_BASE_URL: http://backend:9090
+      EXPENSE_TRACKER_CONTEXT_PATH: /api
+      LLM_PROVIDER: ${LLM_PROVIDER:-fake}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      CORS_ALLOW_ORIGINS: '["http://localhost:${FRONTEND_PORT:-8081}"]'
+    ports:
+      # Loopback only. Operators reach readiness and /metrics here; users reach
+      # the assistant through the frontend's /ai proxy.
+      - "127.0.0.1:${AI_PORT:-18080}:8080"
+    depends_on:
+      ai-db:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "${FRONTEND_PORT:-8081}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+      expense-ai:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  financial-db-data:
+  ai-db-data:

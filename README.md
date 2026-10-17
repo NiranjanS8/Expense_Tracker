@@ -186,6 +186,7 @@ The backend includes both integration and unit tests.
 
 - React
 - Vite
+- Node's built-in test runner (`npm test`)
 
 ## API Documentation
 
@@ -193,3 +194,56 @@ OpenAPI docs are available when the backend is running:
 
 - Swagger UI: `http://localhost:9090/api/swagger-ui.html`
 - OpenAPI JSON: `http://localhost:9090/api/v3/api-docs`
+
+## Read-Only AI Assistant
+
+`expense-ai/` is a separate FastAPI + LangGraph service that answers questions about
+a user's own financial data. It is read-only by construction: it registers no write
+tools, holds no credentials for the financial schema, and reaches data solely
+through the Spring Boot API using the caller's own token. A question that cannot be
+grounded in retrieved data is refused rather than answered from imagination.
+
+- Streaming: `POST /api/v1/chat` responds with typed server-sent events
+  (`message_start`, `status`, `token`, `message_complete`, `error`).
+- Memory: `GET|DELETE /api/v1/conversations` stores the assistant's own history in
+  its own PostgreSQL database.
+- Observability: in-process metrics exposed as Prometheus text at `/metrics`
+  (opt-in) and optional LangSmith tracing (off by default, and never the
+  production path).
+
+`expense-ai/README.md` covers the service, `expense-ai/docs/observability.md` the
+signals and cost counters, and `expense-ai/docs/operations.md` retention, deletion
+and incident procedures.
+
+### Chat UI
+
+The React app in `frontend/` adds an **Assistant** section: streamed answers,
+conversation history, progress states, cancellation, and inline errors. Existing
+screens are unchanged.
+
+```bash
+# terminal 1 — Spring Boot API on http://localhost:9090
+mvn spring-boot:run
+
+# terminal 2 — assistant on http://localhost:8080
+cd expense-ai && uv run uvicorn app.main:app --reload
+
+# terminal 3 — frontend on http://localhost:5173
+cd frontend && npm install && npm run dev
+```
+
+Vite proxies `/api` to Spring Boot and `/ai` to the assistant (`VITE_AI_ORIGIN`
+overrides the latter), so the browser keeps working against a single origin.
+
+## Staging Deployment
+
+`compose.staging.yaml` runs the whole stack — Spring Boot, the assistant, one
+PostgreSQL per service, and the SPA behind nginx:
+
+```bash
+cp .env.staging.example .env.staging   # fill in the values marked REQUIRED
+docker compose -f compose.staging.yaml --env-file .env.staging up --build
+```
+
+Verification steps, TLS, secret handling, monitoring and rollback are in
+`docs/deployment.md`.

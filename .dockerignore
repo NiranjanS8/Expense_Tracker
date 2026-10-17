@@ -1,0 +1,22 @@
+# Build context for backend.Dockerfile (the Maven project at the repository root).
+# Everything the Spring Boot build does not read is kept out, including the two
+# sibling services and any local credentials.
+
+.git
+.gitignore
+.idea
+.vscode
+target
+.env
+.env.*
+*.log
+
+frontend
+expense-ai
+docs
+deploy
+
+*.md
+Expence_Tracker_Architecture.png
+compose.staging.yaml
+backend.Dockerfile
