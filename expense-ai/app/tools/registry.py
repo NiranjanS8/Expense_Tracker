@@ -59,6 +59,18 @@ class ToolDefinition:
         return self.arguments_model.model_json_schema()
 
 
+@dataclass(frozen=True)
+class PreparedToolCall:
+    """A tool call that has passed allowlisting and argument validation."""
+
+    definition: ToolDefinition
+    arguments: ToolArguments
+
+    @property
+    def name(self) -> str:
+        return self.definition.name
+
+
 class ToolRegistry:
     def __init__(self, definitions: Sequence[ToolDefinition]) -> None:
         self._definitions = tuple(definitions)
@@ -77,6 +89,39 @@ class ToolRegistry:
             logger.warning("event=tool_not_allowlisted tool=%s", name[:_MAX_LOGGED_NAME_LENGTH])
             raise InvalidRequestError("That tool is not available.") from None
 
+    def is_allowed(self, name: str) -> bool:
+        return name in self._by_name
+
+    def prepare(self, name: str, arguments: Mapping[str, object] | None) -> PreparedToolCall:
+        """Resolve and validate a tool call without running it.
+
+        Separate from execution so the graph can validate and authorize a call
+        before any upstream request is made.
+        """
+        definition = self.get(name)
+        validated = _validate_arguments(definition, arguments or {})
+        return PreparedToolCall(definition=definition, arguments=validated)
+
+    async def run(
+        self,
+        prepared: PreparedToolCall,
+        *,
+        client: ExpenseTrackerClient,
+        context: UserContext,
+    ) -> BaseModel:
+        started = time.perf_counter()
+        try:
+            result = await prepared.definition.handler(client, context, prepared.arguments)
+        except AppError as exception:
+            _log_invocation(prepared.definition.name, context, started, outcome=exception.code)
+            raise
+        except Exception:
+            _log_invocation(prepared.definition.name, context, started, outcome="unexpected_error")
+            raise
+
+        _log_invocation(prepared.definition.name, context, started, outcome="ok")
+        return result
+
     async def execute(
         self,
         name: str,
@@ -85,21 +130,8 @@ class ToolRegistry:
         context: UserContext,
         arguments: Mapping[str, object] | None = None,
     ) -> BaseModel:
-        definition = self.get(name)
-        validated = _validate_arguments(definition, arguments or {})
-        started = time.perf_counter()
-
-        try:
-            result = await definition.handler(client, context, validated)
-        except AppError as exception:
-            _log_invocation(definition.name, context, started, outcome=exception.code)
-            raise
-        except Exception:
-            _log_invocation(definition.name, context, started, outcome="unexpected_error")
-            raise
-
-        _log_invocation(definition.name, context, started, outcome="ok")
-        return result
+        prepared = self.prepare(name, arguments)
+        return await self.run(prepared, client=client, context=context)
 
 
 def build_tool_registry() -> ToolRegistry:

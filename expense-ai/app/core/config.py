@@ -41,6 +41,21 @@ class Settings(BaseSettings):
 
     identity_cache_ttl_seconds: int = Field(default=60, ge=0)
 
+    # AI-owned persistence. PostgreSQL in every real deployment; tests use SQLite.
+    database_url: str = "postgresql+asyncpg://expense_ai:expense_ai@localhost:5432/expense_ai"
+    database_echo: bool = False
+    # Alembic owns the schema. Auto-create exists only so tests can build it in memory.
+    auto_create_schema: bool = False
+
+    # Bounds on the agent workflow and on conversation memory.
+    agent_max_tool_calls: int = Field(default=3, ge=0, le=8)
+    # Upper bound on LangGraph super-steps, so a misbehaving model cannot spin.
+    agent_recursion_limit: int = Field(default=40, ge=1, le=100)
+    agent_history_messages: int = Field(default=12, ge=0, le=50)
+    conversation_list_limit: int = Field(default=50, ge=1, le=200)
+    conversation_message_limit: int = Field(default=200, ge=1, le=500)
+    conversation_title_max_length: int = Field(default=80, ge=1, le=200)
+
     max_request_bytes: int = Field(default=32_768, gt=0)
     chat_rate_limit_per_minute: int = Field(default=20, gt=0)
     cors_allow_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])

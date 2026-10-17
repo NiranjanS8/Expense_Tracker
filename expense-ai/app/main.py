@@ -16,9 +16,15 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 
+from app.agent.graph import build_agent_graph
+from app.agent.nodes import AgentNodes
+from app.agent.service import ChatService
 from app.api.v1.health import router as health_router
 from app.api.v1.router import build_v1_router
+from app.conversations.database import Database
+from app.conversations.repository import ConversationRepository
 from app.core.config import Settings, get_settings
 from app.core.correlation import (
     CORRELATION_HEADER,
@@ -56,12 +62,39 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.tool_registry = build_tool_registry()
 
+    database = Database(
+        settings.database_url,
+        echo=settings.database_echo,
+        auto_create_schema=settings.auto_create_schema,
+    )
+    app.state.database = database
+    try:
+        # Alembic owns the schema in deployment; this only builds it when enabled.
+        await database.start()
+    except SQLAlchemyError:
+        logger.error("event=schema_initialization_failed")
+
+    repository = ConversationRepository(database)
+    app.state.conversation_repository = repository
+
     # A misconfigured provider must not prevent startup: readiness reports it.
     try:
         app.state.model_provider = build_provider(settings)
     except ProviderConfigurationError:
         logger.error("event=provider_configuration_invalid provider=%s", settings.llm_provider.value)
         app.state.model_provider = None
+
+    nodes = AgentNodes(
+        provider=lambda: app.state.model_provider,
+        client=lambda: app.state.expense_tracker_client,
+        registry=app.state.tool_registry,
+        settings=settings,
+    )
+    app.state.chat_service = ChatService(
+        graph=build_agent_graph(nodes, max_tool_calls=settings.agent_max_tool_calls),
+        repository=repository,
+        settings=settings,
+    )
 
     logger.info("event=startup service=%s provider=%s", settings.service_name, settings.llm_provider.value)
     try:
@@ -70,6 +103,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if app.state.model_provider is not None:
             await app.state.model_provider.aclose()
         await client.aclose()
+        await database.dispose()
         logger.info("event=shutdown service=%s", settings.service_name)
 
 

@@ -37,4 +37,12 @@ async def readiness(request: Request, response: Response) -> dict[str, object]:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {"status": "not_ready", "checks": checks, "reason": str(exception)}
 
+    database = getattr(request.app.state, "database", None)
+    if database is not None and not await database.ping():
+        logger.warning("event=readiness_failed dependency=database")
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        checks["database"] = "down"
+        return {"status": "not_ready", "checks": checks, "reason": "database unavailable"}
+    checks["database"] = "up"
+
     return {"status": "ready", "checks": checks}

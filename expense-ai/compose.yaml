@@ -1,10 +1,30 @@
 name: expense-ai
 
 services:
+  # AI-owned persistence only. This is never pointed at the financial schema;
+  # Spring Boot remains the sole owner of financial tables.
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: expense_ai
+      POSTGRES_USER: expense_ai
+      POSTGRES_PASSWORD: expense_ai
+    ports:
+      - "5433:5432" # host 5433 to avoid clashing with the app's own Postgres
+    volumes:
+      - expense-ai-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U expense_ai -d expense_ai"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   expense-ai:
     build:
       context: .
     image: expense-ai:local
+    # Apply AI-owned migrations, then serve.
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8080"]
     ports:
       # Override with EXPENSE_AI_PORT if 8080 is already taken on the host.
       - "${EXPENSE_AI_PORT:-8080}:8080"
@@ -18,7 +38,14 @@ services:
       EXPENSE_TRACKER_BASE_URL: ${EXPENSE_TRACKER_BASE_URL:-http://host.docker.internal:9090}
       EXPENSE_TRACKER_CONTEXT_PATH: ${EXPENSE_TRACKER_CONTEXT_PATH:-/api}
       LLM_PROVIDER: ${LLM_PROVIDER:-fake}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://expense_ai:expense_ai@postgres:5432/expense_ai}
+    depends_on:
+      postgres:
+        condition: service_healthy
     extra_hosts:
       # Makes host.docker.internal resolve on Linux as well as Docker Desktop.
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+
+volumes:
+  expense-ai-postgres:

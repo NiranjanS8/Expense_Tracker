@@ -1,0 +1,61 @@
+"""Typed server-sent events emitted by a chat turn.
+
+The payloads are stable and deliberately small. No event carries a bearer token,
+an internal tool argument, a stack trace, or another user's identifier.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+MESSAGE_START = "message_start"
+STATUS = "status"
+TOKEN = "token"
+MESSAGE_COMPLETE = "message_complete"
+ERROR = "error"
+
+
+@dataclass(frozen=True)
+class StreamEvent:
+    event: str
+    data: dict[str, Any] = field(default_factory=dict)
+
+
+def message_start(*, conversation_id: str) -> StreamEvent:
+    return StreamEvent(MESSAGE_START, {"conversationId": conversation_id})
+
+
+def status(*, stage: str, tool: str | None = None) -> StreamEvent:
+    payload: dict[str, Any] = {"stage": stage}
+    if tool is not None:
+        payload["tool"] = tool
+    return StreamEvent(STATUS, payload)
+
+
+def token(*, text: str) -> StreamEvent:
+    return StreamEvent(TOKEN, {"text": text})
+
+
+def message_complete(
+    *,
+    conversation_id: str,
+    message_id: int | None,
+    content: str,
+    termination: str,
+    tool_calls: list[str],
+) -> StreamEvent:
+    return StreamEvent(
+        MESSAGE_COMPLETE,
+        {
+            "conversationId": conversation_id,
+            "messageId": message_id,
+            "content": content,
+            "termination": termination,
+            "toolCalls": tool_calls,
+        },
+    )
+
+
+def error(*, code: str, message: str, correlation_id: str | None) -> StreamEvent:
+    return StreamEvent(ERROR, {"code": code, "message": message, "correlationId": correlation_id})

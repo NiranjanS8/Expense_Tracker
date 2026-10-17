@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import httpx
 
-from tests.conftest import CURRENT_USER_PATH, Harness
+from tests.conftest import CURRENT_USER_PATH, Harness, parse_sse
 
 _CHAT_PATH = "/api/v1/chat"
 
@@ -37,30 +37,37 @@ def test_chat_rejects_an_upstream_invalid_token(harness: Harness) -> None:
     assert response.json()["code"] == "unauthenticated"
 
 
-def test_chat_passes_authentication_then_reports_not_implemented(harness: Harness) -> None:
+def test_chat_passes_authentication_then_streams_events(harness: Harness) -> None:
     harness.authenticate(user_id=42)
 
+    response = harness.client.post(
+        _CHAT_PATH,
+        json={"message": "What can you do?"},
+        headers={"Authorization": "Bearer valid-token"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    event_names = [name for name, _ in parse_sse(response.text)]
+    assert event_names[0] == "message_start"
+    assert event_names[-1] == "message_complete"
+    assert len(harness.requests_to(CURRENT_USER_PATH)) == 1
+
+
+def test_chat_never_fabricates_an_answer_to_a_data_question_without_tools(harness: Harness) -> None:
+    harness.authenticate()
+
+    # The default fake provider returns prose without calling any tool, so the
+    # graph must refuse rather than present the prose as a financial figure.
     response = harness.client.post(
         _CHAT_PATH,
         json={"message": "How much did I spend this month?"},
         headers={"Authorization": "Bearer valid-token"},
     )
 
-    assert response.status_code == 501
-    assert response.json()["code"] == "not_implemented"
-    assert len(harness.requests_to(CURRENT_USER_PATH)) == 1
-
-
-def test_chat_declares_a_not_implemented_capability_rather_than_failing_open(harness: Harness) -> None:
-    harness.authenticate()
-
-    response = harness.client.post(
-        _CHAT_PATH,
-        json={"message": "hello"},
-        headers={"Authorization": "Bearer valid-token"},
-    )
-
-    assert response.status_code not in (200, 400, 403, 404, 500)
+    events = dict(parse_sse(response.text))
+    assert events["message_complete"]["content"] != "[fake] How much did I spend this month?"
+    assert events["message_complete"]["toolCalls"] == []
 
 
 def test_conversation_routes_require_authentication(harness: Harness) -> None:
@@ -69,7 +76,7 @@ def test_conversation_routes_require_authentication(harness: Harness) -> None:
     assert harness.client.delete("/api/v1/conversations/abc").status_code == 401
 
 
-def test_conversation_routes_are_authorized_but_unimplemented(harness: Harness) -> None:
+def test_conversation_list_is_empty_for_a_new_user(harness: Harness) -> None:
     harness.authenticate()
 
     response = harness.client.get(
@@ -77,7 +84,8 @@ def test_conversation_routes_are_authorized_but_unimplemented(harness: Harness) 
         headers={"Authorization": "Bearer valid-token"},
     )
 
-    assert response.status_code == 501
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_invalid_chat_body_is_rejected_before_authentication_logic(harness: Harness) -> None:
@@ -135,7 +143,7 @@ def test_chat_is_rate_limited_per_user(harness: Harness) -> None:
             json={"message": "hello"},
             headers={"Authorization": "Bearer valid-token"},
         )
-        assert response.status_code == 501
+        assert response.status_code == 200
 
     limited = harness.client.post(
         _CHAT_PATH,

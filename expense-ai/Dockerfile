@@ -19,6 +19,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --no-dev
 
 COPY app ./app
+# Migrations ship in the image so operators can run `alembic upgrade head` there.
+COPY alembic.ini ./
+COPY migrations ./migrations
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 

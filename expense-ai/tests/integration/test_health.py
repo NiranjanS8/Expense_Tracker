@@ -21,6 +21,7 @@ def test_readiness_reports_the_fake_provider(harness: Harness) -> None:
     body = response.json()
     assert body["status"] == "ready"
     assert body["checks"]["model_provider"] == "fake"
+    assert body["checks"]["database"] == "up"
 
 
 def test_readiness_fails_when_provider_credentials_are_missing() -> None:

@@ -1,9 +1,11 @@
 # expense-ai
 
 Read-only AI assistant for the existing Expense Tracker Spring Boot backend.
-FastAPI handles HTTP; a bounded LangGraph workflow (Phase 3) will control model
-execution. This service never connects to the financial database — Spring Boot
-remains the only route to financial data and the only authority for tokens.
+FastAPI handles HTTP; a bounded LangGraph workflow controls model execution. This
+service never connects to the financial database — Spring Boot remains the only
+route to financial data and the only authority for tokens. Conversation state is
+stored in the service's own PostgreSQL database, separate from the financial
+schema.
 
 ## Status
 
@@ -30,9 +32,19 @@ Phase 2 — read-only tools. Implemented:
 - Bounded inputs (date ranges, amounts, pagination, free text, list sizes) and
   bounded, read-only retries on the upstream client.
 
-Not implemented yet: the LangGraph workflow, conversation persistence, and
-streaming. `/api/v1/chat` and the conversation routes require authentication and
-then return `501`, deliberately, rather than fabricating a response.
+Phase 3 — the bounded assistant. Implemented:
+
+- A single LangGraph workflow (`app/agent/`) with explicit nodes: load context,
+  classify intent, plan, validate arguments, authorize, execute one tool, verify,
+  compose, persist. No autonomous loop; tool calls and graph steps are bounded.
+- Owner-scoped conversation persistence in PostgreSQL via SQLAlchemy, with Alembic
+  migrations and a `/api/v1/conversations` read/delete API.
+- Streaming chat at `POST /api/v1/chat` using typed server-sent events.
+- Grounding guarantees: financial figures come only from tool results, and a data
+  question that retrieved nothing is refused rather than answered from the model's
+  memory.
+
+Every answer is a read-only answer. Nothing in this service mutates financial data.
 
 ## Tools
 
@@ -56,11 +68,86 @@ invoked, and no tool accepts a user identifier. A month with no budget, and a
 resource that belongs to another user, are both normal answers rather than
 failures.
 
+## Chat API
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/v1/chat` | Submit a message; streams the answer as server-sent events |
+| `GET` | `/api/v1/conversations` | List the caller's conversations |
+| `GET` | `/api/v1/conversations/{id}` | Read one conversation and its messages |
+| `DELETE` | `/api/v1/conversations/{id}` | Delete one conversation |
+
+All four require `Authorization: Bearer <token>`. A conversation id owned by
+another user is reported as `404`, never `403`, so ids cannot be probed.
+
+`POST /api/v1/chat` body: `{ "message": "...", "conversation_id": "optional" }`.
+Omit `conversation_id` to start a new conversation (its title is taken from the
+first message); supply it to continue one.
+
+### Streaming events
+
+The response is `text/event-stream` with typed events:
+
+| Event | Payload |
+| --- | --- |
+| `message_start` | `{ conversationId }` |
+| `status` | `{ stage, tool? }` — e.g. `planning`, `retrieving` |
+| `token` | `{ text }` — the answer text |
+| `message_complete` | `{ conversationId, messageId, content, termination, toolCalls }` |
+| `error` | `{ code, message, correlationId }` |
+
+Authentication and conversation ownership are resolved *before* the stream opens,
+so `401`/`404` arrive as normal JSON responses. Events never contain prompts,
+tokens, stack traces, or internal tool arguments.
+
+> Current limitation: the model providers complete non-streaming, so `token`
+> carries the whole answer as one event followed by `message_complete`. The event
+> contract is stable; true token-by-token streaming is a provider-level follow-up.
+
+## The workflow
+
+`app/agent/graph.py` wires one bounded `StateGraph`:
+
+```
+load_context -> classify_intent -> plan -> validate_arguments -> authorize_tool
+                                        -> execute_tool -> verify_result
+                                        -> (loop, bounded) -> plan
+              -> compose_answer -> persist_and_trace
+```
+
+- `classify_intent` is a deterministic keyword gate: only finance questions may
+  spend a tool call.
+- The model is given the allowlisted tool schemas and may request a tool; the
+  registry validates its arguments and the graph enforces the per-turn tool
+  budget (`AGENT_MAX_TOOL_CALLS`) and a recursion limit (`AGENT_RECURSION_LIMIT`).
+- A data question that produced no tool result is answered with a deterministic
+  refusal, so the model can never present invented figures. Tool and provider
+  failures become safe, typed messages instead of fabricated totals.
+- `persist_and_trace` runs only on success, so a failed turn stores nothing.
+
+## Conversation persistence and migrations
+
+Conversation state lives in the AI service's own PostgreSQL database
+(`DATABASE_URL`); Spring Boot's financial tables are never touched. Two tables
+are managed by Alembic:
+
+- `conversations` — id, owner id, title, status, timestamps.
+- `messages` — id, conversation id, role (`user`/`assistant`), content, timestamp.
+
+Every query is owner-scoped at the repository boundary. Only user-visible messages
+are stored: no chain-of-thought, no tool payloads, no tokens.
+
+```bash
+uv run alembic upgrade head          # apply migrations
+uv run alembic revision --autogenerate -m "describe the change"
+```
+
 ## Requirements
 
 - Python 3.12
 - [uv](https://docs.astral.sh/uv/)
 - The Spring Boot backend reachable (default `http://localhost:9090`)
+- PostgreSQL for conversation state (the bundled compose file provides one)
 - Docker, only if you want the container image
 
 ## Setup
@@ -69,11 +156,13 @@ failures.
 cd expense-ai
 uv sync
 cp .env.example .env   # then fill in values; never commit .env
+uv run alembic upgrade head   # create the AI-owned schema
 ```
 
 ## Run
 
 ```bash
+uv run alembic upgrade head
 uv run uvicorn app.main:app --reload --port 8080
 ```
 
@@ -99,12 +188,13 @@ Tests never touch the network: the Spring Boot API is stubbed with an explicit
 ## Docker
 
 The image is built from the pinned `uv.lock`, runs as a non-root user, and needs
-no credentials to start (the default provider is `fake`).
+no credentials to start (the default provider is `fake`). Alembic migrations and
+the application ship in the image.
 
 ```bash
 docker build -t expense-ai:local .
 
-# or, using the bundled compose file
+# or, using the bundled compose file (starts PostgreSQL and applies migrations)
 docker compose up -d
 curl http://localhost:8080/health/live
 docker compose down
@@ -144,6 +234,15 @@ All settings are read from the environment or `.env`. See `.env.example`.
 | `EXPENSE_TRACKER_MAX_RETRIES` | Retries for transport failures and `502`/`503`/`504` (never for `4xx`) |
 | `EXPENSE_TRACKER_RETRY_BACKOFF_SECONDS` | Base delay between retries |
 | `IDENTITY_CACHE_TTL_SECONDS` | TTL for the token→identity cache (`0` disables it) |
+| `DATABASE_URL` | AI-owned PostgreSQL URL (SQLAlchemy async URL) |
+| `DATABASE_ECHO` | Log SQL statements (default `false`) |
+| `AUTO_CREATE_SCHEMA` | Build the schema inline; `false` in deployment (Alembic owns it), `true` in tests |
+| `AGENT_MAX_TOOL_CALLS` | Tool calls allowed per turn |
+| `AGENT_RECURSION_LIMIT` | Upper bound on graph steps per turn |
+| `AGENT_HISTORY_MESSAGES` | Prior messages of context sent to the model |
+| `CONVERSATION_LIST_LIMIT` | Maximum conversations returned by the list endpoint |
+| `CONVERSATION_MESSAGE_LIMIT` | Maximum messages returned by the detail endpoint |
+| `CONVERSATION_TITLE_MAX_LENGTH` | Truncation length for derived conversation titles |
 | `LLM_PROVIDER` | `openai` \| `anthropic` \| `mistral` \| `deepseek` \| `gemini` \| `fake` |
 | `<PROVIDER>_API_KEY` | Credential for the selected provider only |
 | `MAX_REQUEST_BYTES` | Rejects larger request bodies with `413` |
@@ -181,6 +280,15 @@ User identity is never taken from chat text, request bodies, or tool arguments.
 
 - The chat rate limiter is in-process; replace it with a shared store before
   horizontal scaling.
-- `/health/ready` validates configuration only; it does not probe Spring Boot, so
-  a backend restart cannot flap this service's readiness.
+- `/health/ready` validates configuration and pings the AI database; it does not
+  probe Spring Boot, so a Java restart cannot flap this service's readiness.
 - Readiness requires the selected provider's credential to be present.
+- `token` events carry the whole answer (see *Streaming events*); genuine
+  token-by-token streaming needs provider-level streaming support.
+- For a data question the model may only answer from tool results, so an
+  ambiguous data question is met with a deterministic "rephrase with a period"
+  refusal rather than a model-written clarifying question.
+- Conversation history is bounded when sent to the model
+  (`AGENT_HISTORY_MESSAGES`) and when returned by the API
+  (`CONVERSATION_MESSAGE_LIMIT`); a retention/cleanup policy for stored
+  conversations is not yet automated.

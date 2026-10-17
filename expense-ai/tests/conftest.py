@@ -7,26 +7,50 @@ responds and tests never touch the network.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+import json
+from collections.abc import AsyncIterator, Callable, Iterator
 from types import TracebackType
+from typing import Any
 
 import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.conversations.database import Database
+from app.conversations.repository import ConversationRepository
 from app.core.config import ProviderName, Settings
 from app.core.security import AccessToken
 from app.identity.introspection import IdentityResolver
 from app.identity.user_context import UserContext
 from app.integrations.expense_tracker_client import AuthenticatedUser, ExpenseTrackerClient
+from app.integrations.model_provider import ChatResponse, FakeModelProvider, ModelProvider
 from app.main import create_app
 
 SPRING_BASE_URL = "http://spring.test"
 CURRENT_USER_PATH = "/api/users/me"
 CORRELATION_ID = "corr-test"
+TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 Responder = Callable[[httpx.Request], httpx.Response]
+
+
+def parse_sse(body: str) -> list[tuple[str, dict[str, Any]]]:
+    """Decode an SSE body into ``(event_name, data)`` pairs."""
+    events: list[tuple[str, dict[str, Any]]] = []
+    for block in body.split("\n\n"):
+        if not block.strip():
+            continue
+        name: str | None = None
+        data: dict[str, Any] = {}
+        for line in block.splitlines():
+            if line.startswith("event: "):
+                name = line[len("event: ") :]
+            elif line.startswith("data: "):
+                data = json.loads(line[len("data: ") :])
+        if name is not None:
+            events.append((name, data))
+    return events
 
 
 def build_user_context(*, user_id: int = 1, token: str = "token-1") -> UserContext:
@@ -106,6 +130,7 @@ class Harness:
         self.client.__enter__()
         self.app.state.identity_resolver = self.resolver
         self.app.state.expense_tracker_client = self.expense_tracker_client
+        self.repository = self.app.state.conversation_repository
         return self
 
     def __exit__(
@@ -139,12 +164,26 @@ class Harness:
     def requests_to(self, path: str) -> list[httpx.Request]:
         return [request for request in self.requests if request.url.path == path]
 
+    def respond_from(self, responder: Responder) -> None:
+        """Answer upstream requests with a routing function instead of one status."""
+        self.responder = responder
+
     def paths(self) -> list[str]:
         return [request.url.path for request in self.requests]
 
     def tool_context(self, *, user_id: int = 1, token: str = "token-1") -> UserContext:
         """The trusted context the app would build for an authenticated caller."""
         return build_user_context(user_id=user_id, token=token)
+
+    def use_model(self, provider: ModelProvider) -> None:
+        """Replace the model provider the compiled graph resolves per request."""
+        self.app.state.model_provider = provider
+
+    def script_model(self, *responses: ChatResponse) -> FakeModelProvider:
+        """Install a fake provider that returns scripted responses in order."""
+        provider = FakeModelProvider(scripted_responses=list(responses))
+        self.app.state.model_provider = provider
+        return provider
 
 
 @pytest.fixture
@@ -156,6 +195,8 @@ def settings() -> Settings:
         identity_cache_ttl_seconds=0,
         max_request_bytes=1024,
         chat_rate_limit_per_minute=3,
+        database_url=TEST_DATABASE_URL,
+        auto_create_schema=True,
     )
 
 
@@ -163,3 +204,19 @@ def settings() -> Settings:
 def harness(settings: Settings) -> Iterator[Harness]:
     with Harness(settings) as instance:
         yield instance
+
+
+@pytest.fixture
+async def database() -> AsyncIterator[Database]:
+    """A fresh in-memory schema per test, no external service required."""
+    instance = Database(TEST_DATABASE_URL, auto_create_schema=True)
+    await instance.start()
+    try:
+        yield instance
+    finally:
+        await instance.dispose()
+
+
+@pytest.fixture
+async def repository(database: Database) -> ConversationRepository:
+    return ConversationRepository(database)
