@@ -8,6 +8,7 @@ logic lives here.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -33,12 +34,21 @@ from app.core.correlation import (
     resolve_correlation_id,
     set_correlation_id,
 )
-from app.core.errors import AppError, PayloadTooLargeError, error_payload
+from app.core.errors import (
+    AppError,
+    ForbiddenError,
+    PayloadTooLargeError,
+    RateLimitedError,
+    UnauthenticatedError,
+    error_payload,
+)
 from app.core.logging import configure_logging
 from app.core.rate_limit import FixedWindowRateLimiter
 from app.identity.introspection import IdentityResolver
 from app.integrations.expense_tracker_client import ExpenseTrackerClient
 from app.integrations.model_provider import ProviderConfigurationError, build_provider
+from app.observability.metrics import metrics
+from app.observability.tracing import configure_tracing
 from app.tools import build_tool_registry
 
 logger = logging.getLogger(__name__)
@@ -110,6 +120,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or get_settings()
     configure_logging(resolved_settings.log_level)
+    configure_tracing(resolved_settings)
 
     app = FastAPI(
         title="Expense Tracker AI",
@@ -146,23 +157,34 @@ def _register_middleware(app: FastAPI) -> None:
     async def correlation_and_limits(request: Request, call_next: Any) -> Any:
         correlation_id = resolve_correlation_id(request.headers.get(CORRELATION_HEADER))
         token = set_correlation_id(correlation_id)
+        started = time.perf_counter()
+        status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
 
         try:
             max_bytes: int = app.state.settings.max_request_bytes
             content_length = request.headers.get("content-length")
             if content_length is not None and content_length.isdigit() and int(content_length) > max_bytes:
-                return _json_error(request, PayloadTooLargeError())
+                response = _json_error(request, PayloadTooLargeError())
+            else:
+                response = await call_next(request)
 
-            response = await call_next(request)
+            status_code = response.status_code
             response.headers[CORRELATION_HEADER] = correlation_id
             return response
         finally:
+            metrics.record_http_request(
+                method=request.method,
+                route=_route_label(request),
+                status=status_code,
+                duration_seconds=time.perf_counter() - started,
+            )
             reset_correlation_id(token)
 
 
 def _register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exception: AppError) -> JSONResponse:
+        _record_error_metrics(exception)
         return _json_error(request, exception)
 
     @app.exception_handler(RequestValidationError)
@@ -196,6 +218,28 @@ def _register_exception_handlers(app: FastAPI) -> None:
             correlation_id=get_correlation_id(),
         )
         return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=payload)
+
+
+def _route_label(request: Request) -> str:
+    """Bounded route label for metrics.
+
+    The matched endpoint's name (e.g. ``submit_message``) is used rather than the
+    concrete URL: it is stable, unique per endpoint, and free of identifiers, so
+    series cardinality cannot grow with traffic.
+    """
+    route = request.scope.get("route")
+    name = getattr(route, "name", None)
+    return str(name) if name else "unmatched"
+
+
+def _record_error_metrics(exception: AppError) -> None:
+    """Count security-relevant rejections that the HTTP status alone would hide."""
+    if isinstance(exception, RateLimitedError):
+        metrics.record_rate_limit_rejection(scope="http")
+    elif isinstance(exception, UnauthenticatedError):
+        metrics.record_auth_denial(reason="unauthenticated")
+    elif isinstance(exception, ForbiddenError):
+        metrics.record_auth_denial(reason="forbidden")
 
 
 def _json_error(request: Request, exception: AppError) -> JSONResponse:

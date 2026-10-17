@@ -60,6 +60,16 @@ class Settings(BaseSettings):
     chat_rate_limit_per_minute: int = Field(default=20, gt=0)
     cors_allow_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
+    # Observability. Metrics are always recorded in-process; the scrape endpoint
+    # stays closed unless enabled and reachable only from a trusted network.
+    metrics_enabled: bool = False
+    # Tracing is off by default: enabling it exports prompts and tool results to a
+    # third party. See docs/observability.md before turning this on.
+    langsmith_tracing: bool = False
+    langsmith_api_key: SecretStr | None = None
+    langsmith_project: str = "expense-ai"
+    langsmith_endpoint: str | None = None
+
     llm_provider: ProviderName = ProviderName.FAKE
     llm_timeout_seconds: float = Field(default=30.0, gt=0)
     llm_max_retries: int = Field(default=2, ge=0)

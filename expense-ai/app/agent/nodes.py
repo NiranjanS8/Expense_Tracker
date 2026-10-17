@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Callable
 
 from langgraph.runtime import Runtime
@@ -24,11 +25,14 @@ from app.integrations.expense_tracker_client import ExpenseTrackerClient
 from app.integrations.model_provider import (
     ChatMessage,
     ChatRequest,
+    ChatResponse,
     ModelProvider,
     ProviderError,
     Role,
     ToolSpec,
 )
+from app.observability.cost import estimate_cost_usd
+from app.observability.metrics import metrics
 from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -104,8 +108,8 @@ class AgentNodes:
             return _model_failure("model_unavailable")
 
         try:
-            response = await provider.complete(
-                self._chat_request(state["working"], tools=list(self._tool_specs))
+            response = await self._complete(
+                provider, self._chat_request(state["working"], tools=list(self._tool_specs)), node="plan"
             )
         except ProviderError:
             logger.warning("event=agent_model_error node=plan")
@@ -217,7 +221,9 @@ class AgentNodes:
             }
 
         try:
-            response = await provider.complete(self._chat_request(state["working"], tools=[]))
+            response = await self._complete(
+                provider, self._chat_request(state["working"], tools=[]), node="compose_answer"
+            )
         except ProviderError:
             logger.warning("event=agent_model_error node=compose_answer")
             return {"answer": _MODEL_UNAVAILABLE, "termination": "model_error", "error_code": "model_error"}
@@ -260,6 +266,46 @@ class AgentNodes:
             temperature=self._settings.llm_temperature,
             max_output_tokens=self._settings.llm_max_output_tokens,
         )
+
+    async def _complete(
+        self,
+        provider: ModelProvider,
+        request: ChatRequest,
+        *,
+        node: str,
+    ) -> ChatResponse:
+        """Call the model once, recording latency, token usage and estimated cost."""
+        started = time.perf_counter()
+        try:
+            response = await provider.complete(request)
+        except ProviderError:
+            metrics.record_model_call(
+                provider=provider.name,
+                node=node,
+                outcome="error",
+                duration_seconds=time.perf_counter() - started,
+            )
+            raise
+
+        usage = response.usage
+        metrics.record_model_call(
+            provider=provider.name,
+            node=node,
+            outcome="ok",
+            duration_seconds=time.perf_counter() - started,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+        )
+        metrics.record_model_cost(
+            provider=provider.name,
+            model=response.model,
+            cost_usd=estimate_cost_usd(
+                response.model,
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+            ),
+        )
+        return response
 
 
 def _model_failure(code: str) -> AgentState:

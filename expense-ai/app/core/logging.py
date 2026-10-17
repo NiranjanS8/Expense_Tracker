@@ -51,3 +51,10 @@ def configure_logging(level: str = "INFO") -> None:
     # Uvicorn installs its own handlers; keep them but let them use our level.
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         logging.getLogger(name).setLevel(level.upper())
+
+    # The HTTP client logs every request URL at INFO, including query parameters
+    # such as a search term. The client's own structured events already cover the
+    # diagnostics worth keeping, so quiet these to warnings to avoid leaking
+    # financial filters into logs.
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)

@@ -44,6 +44,18 @@ Phase 3 — the bounded assistant. Implemented:
   question that retrieved nothing is refused rather than answered from the model's
   memory.
 
+Phase 4 — evaluation and hardening. Implemented:
+
+- A versioned evaluation dataset (`evals/datasets/`) replayed deterministically in
+  CI, covering tool selection, grounding, empty results, backend failures,
+  unsupported requests and prompt injection.
+- Adversarial and resilience suites: unregistered tools, identity/URL arguments,
+  oversized input, upstream and provider failures, and client disconnect.
+- In-process metrics exposed in Prometheus text format at `GET /metrics` (closed
+  unless `METRICS_ENABLED=true`), with token and estimated-cost counters.
+- Optional trace export (off by default); see [`docs/observability.md`](docs/observability.md)
+  and [`docs/operations.md`](docs/operations.md).
+
 Every answer is a read-only answer. Nothing in this service mutates financial data.
 
 ## Tools
@@ -142,6 +154,17 @@ uv run alembic upgrade head          # apply migrations
 uv run alembic revision --autogenerate -m "describe the change"
 ```
 
+## Observability
+
+Metrics are recorded in-process and rendered in the Prometheus text format at
+`GET /metrics`, which is closed unless `METRICS_ENABLED=true`. Labels are drawn
+from a closed set (endpoint names, tool names, outcomes, providers), never from
+user identifiers or amounts. Optional tracing is off by default because it exports
+prompts and retrieved financial figures to a third party. See
+[`docs/observability.md`](docs/observability.md) for the metric catalog, tracing
+setup and redaction, and [`docs/operations.md`](docs/operations.md) for retention,
+deployment and the failure runbook.
+
 ## Requirements
 
 - Python 3.12
@@ -184,6 +207,10 @@ uv run mypy
 
 Tests never touch the network: the Spring Boot API is stubbed with an explicit
 `httpx.MockTransport`.
+
+The evaluation dataset in `evals/datasets/read_only_assistant.json` is replayed by
+`tests/agent_eval/`; add a case there to record the expected behaviour of a new
+prompt.
 
 ## Docker
 
@@ -247,6 +274,11 @@ All settings are read from the environment or `.env`. See `.env.example`.
 | `<PROVIDER>_API_KEY` | Credential for the selected provider only |
 | `MAX_REQUEST_BYTES` | Rejects larger request bodies with `413` |
 | `CHAT_RATE_LIMIT_PER_MINUTE` | Per-user chat limit |
+| `METRICS_ENABLED` | Expose `GET /metrics` (Prometheus text); `false` by default |
+| `LANGSMITH_TRACING` | Enable optional trace export; off by default |
+| `LANGSMITH_API_KEY` | Credential for the tracing backend |
+| `LANGSMITH_PROJECT` | Tracing project name |
+| `LANGSMITH_ENDPOINT` | Tracing backend URL; set it for a self-hosted instance |
 
 ## Model providers
 
@@ -292,3 +324,9 @@ User identity is never taken from chat text, request bodies, or tool arguments.
   (`AGENT_HISTORY_MESSAGES`) and when returned by the API
   (`CONVERSATION_MESSAGE_LIMIT`); a retention/cleanup policy for stored
   conversations is not yet automated.
+- `GET /metrics` has no built-in access control; when enabled it must be reached
+  only from a trusted network.
+- The evaluation suite is deterministic and scripted; a model-backed evaluation of
+  answer quality, latency and cost is not part of CI.
+- Optional tracing exports prompts and the financial figures tools returned to a
+  third party; leave it off, or point it at a self-hosted instance, in production.

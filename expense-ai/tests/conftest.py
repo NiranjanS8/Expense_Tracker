@@ -26,6 +26,7 @@ from app.identity.user_context import UserContext
 from app.integrations.expense_tracker_client import AuthenticatedUser, ExpenseTrackerClient
 from app.integrations.model_provider import ChatResponse, FakeModelProvider, ModelProvider
 from app.main import create_app
+from app.observability.metrics import reset_metrics
 
 SPRING_BASE_URL = "http://spring.test"
 CURRENT_USER_PATH = "/api/users/me"
@@ -103,6 +104,14 @@ class StubbedUpstream:
 @pytest.fixture
 def upstream() -> StubbedUpstream:
     return StubbedUpstream()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_metrics() -> Iterator[None]:
+    """Start and end every test with an empty metrics registry."""
+    reset_metrics()
+    yield
+    reset_metrics()
 
 
 class Harness:

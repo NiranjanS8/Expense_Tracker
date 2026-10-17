@@ -13,6 +13,7 @@ import logging
 from fastapi import APIRouter, Request, Response, status
 
 from app.integrations.model_provider import ProviderConfigurationError, resolve_provider_config
+from app.observability.metrics import PROMETHEUS_MEDIA_TYPE, metrics
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,18 @@ router = APIRouter(tags=["health"])
 @router.get("/health/live")
 async def liveness(request: Request) -> dict[str, str]:
     return {"status": "alive", "service": request.app.state.settings.service_name}
+
+
+@router.get("/metrics")
+async def metrics_scrape(request: Request) -> Response:
+    """Prometheus text exposition, closed unless explicitly enabled.
+
+    Metrics carry no financial data, but the endpoint is still an operational
+    surface: leave it disabled and reach it only from a trusted network.
+    """
+    if not request.app.state.settings.metrics_enabled:
+        return Response(status_code=status.HTTP_404_NOT_FOUND)
+    return Response(content=metrics.render(), media_type=PROMETHEUS_MEDIA_TYPE)
 
 
 @router.get("/health/ready")

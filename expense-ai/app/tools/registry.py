@@ -20,6 +20,7 @@ from pydantic import BaseModel, ValidationError
 from app.core.errors import AppError, InvalidRequestError
 from app.identity.user_context import UserContext
 from app.integrations.expense_tracker_client import ExpenseTrackerClient
+from app.observability.metrics import metrics
 from app.tools.budgets import BudgetStatusArguments, get_budget_status
 from app.tools.common import ToolArguments
 from app.tools.dashboard import (
@@ -230,10 +231,12 @@ def _validate_arguments(definition: ToolDefinition, arguments: Mapping[str, obje
 
 def _log_invocation(tool: str, context: UserContext, started: float, *, outcome: str) -> None:
     # Trace metadata only: amounts, descriptions and category names never appear here.
+    duration_seconds = time.perf_counter() - started
+    metrics.record_tool_call(tool=tool, outcome=outcome, duration_seconds=duration_seconds)
     logger.info(
         "event=tool_invocation tool=%s user_id=%s outcome=%s duration_ms=%s",
         tool,
         context.user.user_id,
         outcome,
-        round((time.perf_counter() - started) * 1000, 1),
+        round(duration_seconds * 1000, 1),
     )

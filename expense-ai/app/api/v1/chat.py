@@ -8,15 +8,18 @@ event on the stream.
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.agent.events import ERROR, MESSAGE_COMPLETE
 from app.agent.service import ChatService
 from app.api.v1.streaming import SSE_HEADERS, SSE_MEDIA_TYPE, encode_sse
 from app.identity.user_context import UserContext, get_user_context
+from app.observability.metrics import metrics
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -44,7 +47,22 @@ async def submit_message(
     events = service.stream_turn(context, conversation=conversation, message=body.message)
 
     async def event_stream() -> AsyncIterator[str]:
-        async for event in events:
-            yield encode_sse(event)
+        started = time.perf_counter()
+        outcome = "incomplete"
+        try:
+            async for event in events:
+                if event.event == MESSAGE_COMPLETE:
+                    outcome = str(event.data.get("termination", "answered"))
+                elif event.event == ERROR:
+                    outcome = f"error:{event.data.get('code', 'unknown')}"
+                yield encode_sse(event)
+        except GeneratorExit:
+            outcome = "cancelled"
+            raise
+        finally:
+            metrics.record_chat_turn(
+                outcome=outcome,
+                duration_seconds=time.perf_counter() - started,
+            )
 
     return StreamingResponse(event_stream(), media_type=SSE_MEDIA_TYPE, headers=SSE_HEADERS)
