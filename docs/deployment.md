@@ -106,8 +106,8 @@ Then walk the acceptance path in a browser at `http://localhost:8081`:
 anything beyond a rehearsal host, source them from your platform's secret store
 (for example `docker compose … --env-file <(your-secret-cli get …)`), rotate
 `JWT_SECRET` and the database passwords on the schedule your policy requires, and
-never bake them into an image — neither Dockerfile copies an env file, and both
-`.dockerignore` files exclude them.
+never bake them into an image — every `.dockerignore` excludes `.env` files, so no
+build context can carry one in.
 
 ## 6. TLS
 

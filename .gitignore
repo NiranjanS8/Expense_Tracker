@@ -5,6 +5,7 @@ target/
 *.iml
 *.log
 .env
+.env.staging
 frontend/node_modules/
 frontend/dist/
 Expense_Tracker_Roadmap.md
