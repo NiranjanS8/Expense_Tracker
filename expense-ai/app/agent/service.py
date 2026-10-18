@@ -15,6 +15,7 @@ from typing import Any
 from langgraph.errors import GraphRecursionError
 
 from app.agent.events import StreamEvent, message_complete, message_start, status, token
+from app.agent.events import draft as draft_event
 from app.agent.events import error as error_event
 from app.agent.graph import CompiledAgentGraph
 from app.agent.policies import conversation_title
@@ -33,6 +34,7 @@ _NODE_STAGES = {
     "authorize_tool": "authorizing",
     "execute_tool": "retrieving",
     "verify_result": "verifying",
+    "compose_draft": "drafting",
     "compose_answer": "composing",
 }
 
@@ -141,6 +143,16 @@ class ChatService:
             )
             return
 
+        # A draft is a form prefill, not an answer of its own: it precedes the
+        # completion so a client can attach it to the message being finalised.
+        proposal = final.get("draft")
+        if isinstance(proposal, dict):
+            yield draft_event(
+                kind=str(proposal.get("kind", "")),
+                fields=_as_fields(proposal.get("fields")),
+                summary=str(proposal.get("summary", "")),
+            )
+
         # Streamed deltas are provisional; a turn whose answer was published that
         # way is not repeated here. ``message_complete`` carries the authoritative
         # content either way.
@@ -168,3 +180,7 @@ def _progress_event(node: str, partial: object) -> StreamEvent | None:
 
 def _as_message_id(value: object) -> int | None:
     return value if isinstance(value, int) else None
+
+
+def _as_fields(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}

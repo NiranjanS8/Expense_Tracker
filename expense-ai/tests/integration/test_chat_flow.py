@@ -265,3 +265,60 @@ def test_a_data_question_answered_from_memory_is_never_streamed(harness: Harness
     assert "999.99" not in response.text
     assert "can't answer it reliably" in str(complete["content"])
     assert _deltas(response.text) == [complete["content"]]
+
+
+def _draft(body: str) -> dict[str, Any]:
+    return dict(parse_sse(body))["draft"]
+
+
+def test_a_record_request_is_drafted_and_issues_no_write(harness: Harness) -> None:
+    harness.respond_from(_upstream_responder())
+
+    response = _post(harness, "Add a 12.50 coffee expense yesterday")
+
+    proposal = _draft(response.text)
+    assert proposal["kind"] == "expense"
+    assert proposal["fields"]["amount"] == 12.5
+    assert proposal["fields"]["description"] == "coffee"
+    assert _complete(response.text)["termination"] == "drafted"
+    # The draft arrives before the completion, so a client can attach it to the
+    # message it is about to finalise.
+    names = [name for name, _ in parse_sse(response.text)]
+    assert names[0] == "message_start"
+    assert names[-1] == "message_complete"
+    assert names.index("draft") < names.index("message_complete")
+    # The whole turn reached Spring Boot with reads only: no create, update or delete.
+    assert {request.method for request in harness.requests} == {"GET"}
+
+
+def test_a_draft_is_produced_without_consulting_the_model(harness: Harness) -> None:
+    harness.respond_from(_upstream_responder())
+    harness.use_model(_UnavailableProvider())
+
+    response = _post(harness, "Add a 12.50 coffee expense yesterday")
+
+    assert _draft(response.text)["kind"] == "expense"
+    assert "Nothing has been saved" in str(_complete(response.text)["content"])
+
+
+def test_a_record_request_without_an_amount_asks_for_one(harness: Harness) -> None:
+    harness.respond_from(_upstream_responder())
+
+    response = _post(harness, "Add a coffee expense")
+
+    assert "draft" not in [name for name, _ in parse_sse(response.text)]
+    complete = _complete(response.text)
+    assert complete["termination"] == "draft_incomplete"
+    assert "need the amount" in str(complete["content"])
+
+
+def test_a_draft_is_persisted_as_text_without_a_write(harness: Harness) -> None:
+    harness.respond_from(_upstream_responder())
+
+    complete = _complete(_post(harness, "Set my budget for next month to 5000").text)
+
+    detail = harness.client.get(f"{_CONVERSATIONS_PATH}/{complete['conversationId']}", headers=_AUTH)
+    messages = detail.json()["messages"]
+    assert [message["role"] for message in messages] == ["user", "assistant"]
+    assert "Nothing has been saved" in messages[1]["content"]
+    assert {request.method for request in harness.requests} == {"GET"}

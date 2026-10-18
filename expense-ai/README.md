@@ -58,6 +58,33 @@ Phase 4 — evaluation and hardening. Implemented:
 
 Every answer is a read-only answer. Nothing in this service mutates financial data.
 
+## Drafts
+
+A request to *record* something — "add a 12.50 coffee expense yesterday", "set my
+budget for next month to 5000" — is answered with a **draft**: the values for one
+of the application's own forms. The chat shows the proposal and a button that
+pre-fills that form; the user reviews it and saves it through the existing screen.
+
+A draft is a proposal, not a change:
+
+- It never reaches a write endpoint. This service has none, and a draft turn
+  issues reads only.
+- It is produced deterministically, without a model call, so it works even when
+  the model provider is unavailable and every value is traceable to the user's own
+  words. A request with no amount produces no draft; the assistant asks for one
+  instead.
+- It is stored as the assistant's message text, so it reads correctly when the
+  conversation is reopened; the form values themselves are not persisted.
+
+`classify_intent` decides a turn is a draft request only when it names both a
+create verb and something recordable, and is not phrased as a question. The gate
+is deliberately conservative — "add up my expenses" and "what should I set my
+budget to?" stay on the read path — so a missed draft degrades to a normal answer
+rather than to an unwanted one.
+
+See [`docs/phase-6-scoping.md`](docs/phase-6-scoping.md) for which write
+operations could ever follow a draft, and why most of the API surface is excluded.
+
 ## Tools
 
 `app/tools/` exposes eight read-only tools. Each one validates its arguments,
@@ -105,6 +132,7 @@ The response is `text/event-stream` with typed events:
 | `message_start` | `{ conversationId }` |
 | `status` | `{ stage, tool? }` — e.g. `planning`, `retrieving` |
 | `token` | `{ text }` — a fragment of the answer as the model produces it |
+| `draft` | `{ kind, fields, summary }` — values for one of the app's forms; nothing saved |
 | `message_complete` | `{ conversationId, messageId, content, termination, toolCalls }` |
 | `error` | `{ code, message, correlationId }` |
 
@@ -120,6 +148,10 @@ arguments that arrive in fragments, so answers arrive as they are written.
 > retracted there. A turn that produces no deltas sends its whole answer as a
 > single `token` instead. Prose from an ungrounded planning call is never
 > published at all, so invented figures cannot appear even transiently.
+>
+> A `draft` event precedes `message_complete` so a client can attach it to the
+> message being finalised. Ignoring it is safe: the answer text still describes
+> the proposal, and nothing has been saved either way.
 
 ## The workflow
 
@@ -129,11 +161,13 @@ arguments that arrive in fragments, so answers arrive as they are written.
 load_context -> classify_intent -> plan -> validate_arguments -> authorize_tool
                                         -> execute_tool -> verify_result
                                         -> (loop, bounded) -> plan
+                                 -> compose_draft -> persist_and_trace
               -> compose_answer -> persist_and_trace
 ```
 
 - `classify_intent` is a deterministic keyword gate: only finance questions may
-  spend a tool call.
+  spend a tool call, and a request to record something is diverted to
+  `compose_draft` before it can reach a tool.
 - The model is given the allowlisted tool schemas and may request a tool; the
   registry validates its arguments and the graph enforces the per-turn tool
   budget (`AGENT_MAX_TOOL_CALLS`) and a recursion limit (`AGENT_RECURSION_LIMIT`).
@@ -330,6 +364,9 @@ User identity is never taken from chat text, request bodies, or tool arguments.
 - For a data question the model may only answer from tool results, so an
   ambiguous data question is met with a deterministic "rephrase with a period"
   refusal rather than a model-written clarifying question.
+- Draft extraction reads amounts, dates and wording with deterministic parsing,
+  so an unusual phrasing ("log my morning coffee, twelve fifty") may not produce a
+  draft; the assistant asks for the amount rather than guessing at it.
 - Conversation history is bounded when sent to the model
   (`AGENT_HISTORY_MESSAGES`) and when returned by the API
   (`CONVERSATION_MESSAGE_LIMIT`); a retention/cleanup policy for stored

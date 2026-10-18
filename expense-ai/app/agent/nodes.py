@@ -12,11 +12,13 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from datetime import date
 from typing import Any
 
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
+from app.agent.drafts import extract_draft
 from app.agent.events import token
 from app.agent.policies import DATA_INTENT, classify_intent
 from app.agent.prompts import SYSTEM_PROMPT
@@ -54,6 +56,10 @@ _NO_DATA = (
     "Try rephrasing with a period such as \u201cthis month\u201d."
 )
 _NO_ANSWER = "I don't have an answer for that. Please try asking in a different way."
+_DRAFT_NEEDS_AMOUNT = (
+    "I can prepare that as a draft for you to save yourself, but I need the amount first. "
+    "For example: \u201cadd a 12.50 coffee expense yesterday\u201d. Nothing has been saved."
+)
 
 
 class AgentNodes:
@@ -209,6 +215,21 @@ class AgentNodes:
         if not state.get("tool_result_json"):
             return {"tool_error": "empty_result", "error_code": "empty_result", "termination": "tool_error"}
         return {"termination": "tool_ok"}
+
+    async def compose_draft(self, state: AgentState, runtime: Runtime[AgentContext]) -> AgentState:
+        """Turn a request to record something into a form prefill, never a write.
+
+        No model and no tool is involved, so a draft holds only values the caller
+        supplied and is produced even when the provider is unavailable.
+        """
+        proposal = extract_draft(state["user_message"], today=date.today())
+        if proposal is None:
+            return {"answer": _DRAFT_NEEDS_AMOUNT, "termination": "draft_incomplete", "draft": None}
+        return {
+            "answer": proposal.message,
+            "termination": "drafted",
+            "draft": {"kind": proposal.kind, "fields": proposal.fields, "summary": proposal.summary},
+        }
 
     async def compose_answer(self, state: AgentState, runtime: Runtime[AgentContext]) -> AgentState:
         error_code = state.get("error_code")

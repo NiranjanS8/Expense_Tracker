@@ -12,7 +12,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from app.agent.nodes import AgentNodes
-from app.agent.policies import DATA_INTENT
+from app.agent.policies import DATA_INTENT, DRAFT_INTENT
 from app.agent.state import AgentContext, AgentState
 
 CompiledAgentGraph = CompiledStateGraph[AgentState, AgentContext, AgentState, AgentState]
@@ -20,7 +20,12 @@ CompiledAgentGraph = CompiledStateGraph[AgentState, AgentContext, AgentState, Ag
 
 def build_agent_graph(nodes: AgentNodes, *, max_tool_calls: int) -> CompiledAgentGraph:
     def after_classify(state: AgentState) -> str:
-        return "plan" if state.get("intent") == DATA_INTENT else "compose_answer"
+        intent = state.get("intent")
+        if intent == DATA_INTENT:
+            return "plan"
+        if intent == DRAFT_INTENT:
+            return "compose_draft"
+        return "compose_answer"
 
     def after_plan(state: AgentState) -> str:
         if state.get("tool_call") is not None:
@@ -54,6 +59,7 @@ def build_agent_graph(nodes: AgentNodes, *, max_tool_calls: int) -> CompiledAgen
     graph.add_node("authorize_tool", nodes.authorize_tool)
     graph.add_node("execute_tool", nodes.execute_tool)
     graph.add_node("verify_result", nodes.verify_result)
+    graph.add_node("compose_draft", nodes.compose_draft)
     graph.add_node("compose_answer", nodes.compose_answer)
     graph.add_node("persist_and_trace", nodes.persist_and_trace)
 
@@ -62,7 +68,11 @@ def build_agent_graph(nodes: AgentNodes, *, max_tool_calls: int) -> CompiledAgen
     graph.add_conditional_edges(
         "classify_intent",
         after_classify,
-        {"plan": "plan", "compose_answer": "compose_answer"},
+        {
+            "plan": "plan",
+            "compose_draft": "compose_draft",
+            "compose_answer": "compose_answer",
+        },
     )
     graph.add_conditional_edges(
         "plan",
@@ -90,6 +100,7 @@ def build_agent_graph(nodes: AgentNodes, *, max_tool_calls: int) -> CompiledAgen
         {"plan": "plan", "compose_answer": "compose_answer"},
     )
     graph.add_edge("compose_answer", "persist_and_trace")
+    graph.add_edge("compose_draft", "persist_and_trace")
     graph.add_edge("persist_and_trace", END)
 
     return graph.compile()

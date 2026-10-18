@@ -8,6 +8,10 @@ an internal tool argument, a stack trace, or another user's identifier.
 to that value rather than assume the deltas always concatenate to it, because a
 grounded draft that turns out to be superseded is retracted there. A turn that
 never streamed sends its whole answer as a single ``token`` instead.
+
+``draft`` carries the values for one of the application's own forms. It is a
+proposal only: the client pre-fills a screen with it and the user saves it, so a
+draft is never itself a change.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from typing import Any
 MESSAGE_START = "message_start"
 STATUS = "status"
 TOKEN = "token"
+DRAFT = "draft"
 MESSAGE_COMPLETE = "message_complete"
 ERROR = "error"
 
@@ -41,6 +46,11 @@ def status(*, stage: str, tool: str | None = None) -> StreamEvent:
 
 def token(*, text: str) -> StreamEvent:
     return StreamEvent(TOKEN, {"text": text})
+
+
+def draft(*, kind: str, fields: dict[str, Any], summary: str) -> StreamEvent:
+    """Values for one of the application's own forms; nothing has been saved."""
+    return StreamEvent(DRAFT, {"kind": kind, "fields": fields, "summary": summary})
 
 
 def message_complete(

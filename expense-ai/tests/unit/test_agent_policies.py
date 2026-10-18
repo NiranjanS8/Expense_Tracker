@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from app.agent.policies import DATA_INTENT, GENERAL_INTENT, classify_intent, conversation_title
+from app.agent.policies import (
+    DATA_INTENT,
+    DRAFT_INTENT,
+    GENERAL_INTENT,
+    classify_intent,
+    conversation_title,
+)
 
 
 @pytest.mark.parametrize(
@@ -33,6 +39,32 @@ def test_financial_questions_are_routed_to_the_data_path(message: str) -> None:
 )
 def test_non_financial_messages_take_the_general_path(message: str) -> None:
     assert classify_intent(message) == GENERAL_INTENT
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Add a 12.50 coffee expense yesterday",
+        "Record my 1200 rent payment",
+        "Set my budget for this month to 20000",
+        "Record a 40 lunch expense yesterday",
+    ],
+)
+def test_requests_to_record_something_take_the_draft_path(message: str) -> None:
+    assert classify_intent(message) == DRAFT_INTENT
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Add up my expenses this month",
+        "What should I set my budget to?",
+        "How much did I spend this month?",
+        "Can you make changes to my account for me?",
+    ],
+)
+def test_lookalike_phrases_never_take_the_draft_path(message: str) -> None:
+    assert classify_intent(message) != DRAFT_INTENT
 
 
 def test_titles_are_collapsed_and_bounded() -> None:

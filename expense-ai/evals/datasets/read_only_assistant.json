@@ -488,6 +488,20 @@
         "answer_excludes": ["9999.99"],
         "upstream_paths": {}
       }
+    },
+    {
+      "id": "draft-expense-prefill",
+      "category": "draft_prefill",
+      "prompt": "Add a 12.50 coffee expense yesterday",
+      "intent": "draft",
+      "upstream": [],
+      "model": [],
+      "expect": {
+        "tool_calls": [],
+        "termination": "drafted",
+        "answer_contains": ["Nothing has been saved"],
+        "upstream_paths": {}
+      }
     }
   ]
 }

@@ -8,7 +8,8 @@ Status: implemented and covered by the automated suite (`uv run pytest`,
 - **Workflow** (`app/agent/`): one `StateGraph` with typed state (`AgentState`)
   and request-scoped context (`AgentContext`). Nodes: `load_context`,
   `classify_intent`, `plan`, `validate_arguments`, `authorize_tool`,
-  `execute_tool`, `verify_result`, `compose_answer`, `persist_and_trace`.
+  `execute_tool`, `verify_result`, `compose_draft`, `compose_answer`,
+  `persist_and_trace`.
 - **Persistence** (`app/conversations/`): SQLAlchemy models, an owner-scoped
   repository, and an Alembic migration (`migrations/versions/0001_…`) for
   `conversations` and `messages`.
@@ -54,6 +55,12 @@ Status: implemented and covered by the automated suite (`uv run pytest`,
   free-form clarifying question for one; the user instead receives a short
   "rephrase with a period" refusal. A future structured-output path could restore
   model-written clarifications without weakening grounding.
+- **Drafts are extracted deterministically, not by the model.** A record request
+  is parsed by `app/agent/drafts.py` rather than sent to a provider. This keeps
+  the write-side of grounding intact — the assistant cannot propose an amount the
+  user never typed — and makes the path work when the provider is down. The cost
+  is that unusual phrasings are not understood, which is the safe direction: the
+  assistant asks for the amount instead of guessing.
 
 ## Open items
 

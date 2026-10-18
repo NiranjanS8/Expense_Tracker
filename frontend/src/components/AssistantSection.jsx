@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MessageSquarePlus, Send, Sparkles, Square, Trash2 } from "lucide-react";
+import { ClipboardList, MessageSquarePlus, Send, Sparkles, Square, Trash2 } from "lucide-react";
 
 import {
   deleteConversation,
@@ -7,6 +7,7 @@ import {
   listConversations,
   streamChat,
 } from "../aiClient";
+import { draftFormLabel } from "../drafts";
 
 const MAX_MESSAGE_LENGTH = 4000;
 
@@ -17,6 +18,7 @@ const STATUS_LABELS = {
   authorizing: "Checking permissions",
   retrieving: "Retrieving your data",
   verifying: "Verifying the data",
+  drafting: "Preparing a draft",
   composing: "Writing the answer",
 };
 
@@ -59,7 +61,7 @@ function formatTimestamp(value) {
   }).format(date);
 }
 
-export default function AssistantSection({ token, onUnauthorized }) {
+export default function AssistantSection({ token, onUnauthorized, onApplyDraft }) {
   const [conversations, setConversations] = useState([]);
   const [conversationId, setConversationId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -117,6 +119,10 @@ export default function AssistantSection({ token, onUnauthorized }) {
 
   function appendToAssistant(text) {
     updateLastAssistant((last) => ({ ...last, content: `${last.content}${text}` }));
+  }
+
+  function attachDraft(payload) {
+    updateLastAssistant((last) => ({ ...last, draft: payload }));
   }
 
   function clearEmptyAssistant() {
@@ -261,6 +267,10 @@ export default function AssistantSection({ token, onUnauthorized }) {
             appendToAssistant(payload.text || "");
             return;
           }
+          if (name === "draft") {
+            attachDraft(payload);
+            return;
+          }
           if (name === "message_complete") {
             finalizeAssistant(payload);
             return;
@@ -359,8 +369,8 @@ export default function AssistantSection({ token, onUnauthorized }) {
             <h2>Ask about your money</h2>
           </div>
           <p className="muted">
-            Read-only: answers are drawn from your own Expense Tracker data and nothing is ever
-            changed.
+            Read-only: answers come from your own Expense Tracker data and nothing is ever changed.
+            I can draft an entry for you, but you save it yourself.
           </p>
         </header>
 
@@ -376,6 +386,7 @@ export default function AssistantSection({ token, onUnauthorized }) {
                 <li>How is my food budget tracking?</li>
                 <li>What were my biggest expenses last week?</li>
                 <li>Am I on track for my savings goal?</li>
+                <li>Add a 12.50 coffee expense yesterday</li>
               </ul>
             </div>
           )}
@@ -396,6 +407,22 @@ export default function AssistantSection({ token, onUnauthorized }) {
                       </span>
                     ))}
                     {note && <span className="chat-note">{note}</span>}
+                  </div>
+                )}
+                {message.draft && (
+                  <div className="chat-draft">
+                    <p className="chat-draft__summary">{message.draft.summary}</p>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => onApplyDraft?.(message.draft)}
+                    >
+                      <ClipboardList size={14} />
+                      Review in the {draftFormLabel(message.draft)}
+                    </button>
+                    <span className="muted chat-draft__note">
+                      Nothing is saved until you press Save.
+                    </span>
                   </div>
                 )}
               </article>

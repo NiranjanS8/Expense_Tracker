@@ -8,7 +8,7 @@ context and which is never persisted, logged, or sent to the model.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from app.conversations.repository import ConversationRepository
 from app.identity.user_context import UserContext
@@ -27,6 +27,8 @@ class AgentState(TypedDict, total=False):
     tool_names: list[str]
     tool_result_json: str | None
     tool_error: str | None
+    # A form prefill the user still has to save; never a change by itself.
+    draft: dict[str, Any] | None
     answer: str | None
     answer_message_id: int | None
     # Set when the answer was already published as stream deltas, so the

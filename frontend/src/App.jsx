@@ -19,6 +19,7 @@ import ExpensesSection from "./components/ExpensesSection";
 import GoalsSection from "./components/GoalsSection";
 import OverviewSection from "./components/OverviewSection";
 import ReportsSection from "./components/ReportsSection";
+import { budgetFormFromDraft, draftTargetSection, expenseFormFromDraft } from "./drafts";
 import {
   apiRequest,
   exportTypes,
@@ -582,6 +583,27 @@ export default function App() {
     setGlobalMessage(message);
   }
 
+  // The assistant only ever proposes: applying a draft pre-fills the matching
+  // form and moves the user to it. Saving stays with the existing screen.
+  function applyDraft(draft) {
+    if (!draft) {
+      return;
+    }
+
+    if (draftTargetSection(draft) === "budgets") {
+      setBudgetForm(budgetFormFromDraft(draft));
+      setBudgetError("");
+      setBudgetMessage("");
+      setActiveSection("budgets");
+      return;
+    }
+
+    setExpenseForm(expenseFormFromDraft(draft, categories));
+    setExpenseError("");
+    setExpenseMessage("");
+    setActiveSection("overview");
+  }
+
   if (!token) {
     return (
       <AuthScreen
@@ -759,6 +781,7 @@ export default function App() {
           <AssistantSection
             token={token}
             onUnauthorized={() => logout("Your session expired. Please log in again.")}
+            onApplyDraft={applyDraft}
           />
         )}
       </section>

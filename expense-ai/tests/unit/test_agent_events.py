@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from app.agent.events import (
+    DRAFT,
     ERROR,
     MESSAGE_COMPLETE,
     MESSAGE_START,
     TOKEN,
+    draft,
     error,
     message_complete,
     message_start,
@@ -42,6 +44,21 @@ def test_message_complete_exposes_stable_identifiers() -> None:
     assert event.data["conversationId"] == "conv-1"
     assert event.data["messageId"] == 7
     assert event.data["toolCalls"] == ["get_spending_summary"]
+
+
+def test_draft_carries_the_form_values_and_nothing_saved_yet() -> None:
+    event = draft(
+        kind="expense",
+        fields={"amount": 12.5, "expenseDate": "2026-10-17"},
+        summary="Expense of 12.50 for coffee on 2026-10-17",
+    )
+
+    assert event.event == DRAFT
+    assert event.data == {
+        "kind": "expense",
+        "fields": {"amount": 12.5, "expenseDate": "2026-10-17"},
+        "summary": "Expense of 12.50 for coffee on 2026-10-17",
+    }
 
 
 def test_error_payload_has_no_internal_detail() -> None:
