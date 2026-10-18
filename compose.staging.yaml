@@ -38,6 +38,11 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       JPA_DDL_AUTO: ${JPA_DDL_AUTO:-update}
       APP_SEED_ENABLED: ${APP_SEED_ENABLED:-true}
+    volumes:
+      # Generated export files. They are per-user financial documents and have no
+      # retention job, so they live on a named volume instead of the container
+      # layer: they survive `down`/recreate and can be inspected or purged.
+      - export-jobs:/var/lib/expense-tracker/exports
     depends_on:
       financial-db:
         condition: service_healthy
@@ -115,3 +120,4 @@ services:
 volumes:
   financial-db-data:
   ai-db-data:
+  export-jobs:

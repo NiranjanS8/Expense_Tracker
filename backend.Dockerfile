@@ -22,7 +22,15 @@ ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75"
 
 WORKDIR /app
 
-RUN useradd --create-home --uid 10001 app
+# Export jobs write files, so the non-root user needs a directory it owns. The
+# property default (./target/export-jobs) resolves to /app/target, which the app
+# user cannot create because /app belongs to root; /app itself stays read-only.
+RUN useradd --create-home --uid 10001 app \
+    && mkdir -p /var/lib/expense-tracker/exports \
+    && chown -R app:app /var/lib/expense-tracker
+
+ENV APP_EXPORT_JOBS_STORAGE_DIR=/var/lib/expense-tracker/exports
+
 COPY --from=builder /build/target/*.jar app.jar
 USER app
 

@@ -33,7 +33,8 @@ Two invariants shape this layout:
 ## 2. Prerequisites
 
 - Docker Engine with Compose v2 (`docker compose version`).
-- A PostgreSQL-free host: both databases run in containers with named volumes.
+- A PostgreSQL-free host: the stack keeps its state in named volumes
+  (`financial-db-data`, `ai-db-data`, `export-jobs`).
 - Roughly 4 GB of free disk for images and volumes, and enough memory for the
   Maven and Node builds (the first `up --build` is the slow one).
 
@@ -83,10 +84,13 @@ Then walk the acceptance path in a browser at `http://localhost:8081`:
    inventing figures.
 6. Reload the page and reopen the conversation from the sidebar.
 
-> With `LLM_PROVIDER=fake` the answers are deliberately synthetic (`[fake] …`),
-> because the fake provider never invents financial data. It exists so the stack
-> can be rehearsed with no credentials. Set a real provider and key in
-> `.env.staging` to see grounded answers.
+> With `LLM_PROVIDER=fake` the stack comes up and every path works, but answers
+> are not grounded: the fake provider echoes `[fake] …` for a general question and
+> never requests a tool. A data question therefore takes the refusal path
+> (`termination: no_data`, "I wasn't able to look that up …") rather than inventing
+> figures — which is the guard working, not a failure. Step 3 needs a real provider
+> and key in `.env.staging` to show a grounded answer; every other step, including
+> the refusal in step 5, works without credentials.
 
 ## 5. Configuration and secrets
 
@@ -212,3 +216,7 @@ docker compose -f compose.staging.yaml exec -T financial-db \
   usage; a provider that omits it is recorded as zero rather than estimated.
 - `frontend/nginx.conf` resolves the upstream names `backend` and `expense-ai` at
   startup, so the service names in `compose.staging.yaml` are part of the contract.
+- Generated export files are write-only in practice: they land in the `export-jobs`
+  volume and nothing deletes them, because the app has no retention or expiry job.
+  The volume grows with use, so prune it on a schedule (or move exports to object
+  storage) before the data matters.
