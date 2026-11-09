@@ -1,9 +1,10 @@
-"""Deterministic draft extraction for form prefill.
+"""Deterministic extraction for form prefill.
 
-The assistant never writes. When the caller asks it to record something, it turns
-that request into a *draft*: a set of values for the application's own form. The
-user reviews the draft and saves it through the normal screen, so a draft can
-never become a record on its own.
+When the caller asks it to record something, the assistant turns that request into
+a *draft*: a set of values for the application's own form. The user reviews the
+draft and saves it through the normal screen, so a draft can never become a record
+on its own. Drafts remain the fallback even when confirmed writes are enabled, for
+requests the write parser cannot complete.
 
 Extraction is deterministic rather than model-driven on purpose. Every value in a
 draft is traceable to the caller's own words, so the assistant cannot propose a
@@ -117,7 +118,7 @@ class DraftProposal:
 
 def extract_draft(message: str, *, today: date) -> DraftProposal | None:
     """Read a draft off ``message``, or ``None`` when it carries no amount."""
-    amount = _find_amount(message)
+    amount = find_amount(message)
     if amount is None or amount <= 0:
         return None
     if _lowered_words(message) & {"budget", "budgets"}:
@@ -126,8 +127,8 @@ def extract_draft(message: str, *, today: date) -> DraftProposal | None:
 
 
 def _expense_draft(message: str, *, amount: float, today: date) -> DraftProposal:
-    expense_date = _resolve_date(message, today=today)
-    description = _describe(message) or "Expense"
+    expense_date = resolve_date(message, today=today)
+    description = describe(message) or "Expense"
     return DraftProposal(
         kind=EXPENSE_DRAFT,
         fields={
@@ -136,9 +137,9 @@ def _expense_draft(message: str, *, amount: float, today: date) -> DraftProposal
             "description": description,
             "categoryHint": description,
         },
-        summary=f"Expense of {_money(amount)} for {description} on {expense_date.isoformat()}",
+        summary=f"Expense of {format_money(amount)} for {description} on {expense_date.isoformat()}",
         message=(
-            f"Here's a draft expense: {_money(amount)} for {description} on "
+            f"Here's a draft expense: {format_money(amount)} for {description} on "
             f"{expense_date.isoformat()}. Nothing has been saved \u2014 review it in the "
             "expense form and press Save when it looks right."
         ),
@@ -146,20 +147,20 @@ def _expense_draft(message: str, *, amount: float, today: date) -> DraftProposal
 
 
 def _budget_draft(message: str, *, amount: float, today: date) -> DraftProposal:
-    month = _resolve_month(message, today=today)
+    month = resolve_month(message, today=today)
     return DraftProposal(
         kind=BUDGET_DRAFT,
         fields={"amount": amount, "budgetMonth": month},
-        summary=f"Monthly budget of {_money(amount)} for {month}",
+        summary=f"Monthly budget of {format_money(amount)} for {month}",
         message=(
-            f"Here's a draft monthly budget: {_money(amount)} for {month}. "
+            f"Here's a draft monthly budget: {format_money(amount)} for {month}. "
             "Nothing has been saved \u2014 review it in the budget form and press Save when "
             "it looks right."
         ),
     )
 
 
-def _find_amount(message: str) -> float | None:
+def find_amount(message: str) -> float | None:
     """The first explicit amount, ignoring anything that is part of a date."""
     scrubbed = _ISO_DATE.sub(" ", message)
     scrubbed = _YEAR_MONTH.sub(" ", scrubbed)
@@ -170,7 +171,7 @@ def _find_amount(message: str) -> float | None:
     return float(match.group(0).replace(",", ""))
 
 
-def _resolve_date(message: str, *, today: date) -> date:
+def resolve_date(message: str, *, today: date) -> date:
     iso = _ISO_DATE.search(message)
     if iso is not None:
         parsed = _parse_date(iso.group(0), "%Y-%m-%d")
@@ -199,7 +200,7 @@ def _parse_day_first(match: re.Match[str], *, today: date) -> date | None:
     return _parse_date(f"{resolved_year:04d}-{int(month):02d}-{int(day):02d}", "%Y-%m-%d")
 
 
-def _resolve_month(message: str, *, today: date) -> str:
+def resolve_month(message: str, *, today: date) -> str:
     explicit = _YEAR_MONTH.search(message)
     if explicit is not None:
         return explicit.group(0)
@@ -217,8 +218,13 @@ def _shift_month(today: date, delta: int) -> str:
     return f"{index // 12:04d}-{index % 12 + 1:02d}"
 
 
-def _describe(message: str) -> str:
-    words = [word for word in _words(message) if word.lower() not in _FILLER]
+def describe(message: str, *, ignored: frozenset[str] = frozenset()) -> str:
+    """The description built from what remains after the action and metadata.
+
+    ``ignored`` lets the write path drop tokens it has already interpreted (a
+    payment method, for instance) so they are not repeated in the description.
+    """
+    words = [word for word in _words(message) if word.lower() not in _FILLER and word.lower() not in ignored]
     return " ".join(words).strip()[:_MAX_DESCRIPTION_LENGTH]
 
 
@@ -237,5 +243,5 @@ def _lowered_words(message: str) -> set[str]:
     return {word.lower() for word in _words(message)}
 
 
-def _money(amount: float) -> str:
+def format_money(amount: float) -> str:
     return f"{amount:,.2f}"

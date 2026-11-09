@@ -1,17 +1,20 @@
 # Phase 6 scoping — which write operations the assistant may ever propose
 
-Status: Tier A shipped (read-only drafts). Tiers B–D are **not** implemented; Phase 6
-remains gated on explicit owner approval after a reviewed read-only launch
-(`plan.md` §6, §7).
+Status: Tier A shipped (read-only drafts). **Tier B is implemented behind
+`WRITE_OPERATIONS_ENABLED`, off by default**; its design and runbook live in
+[`write-operations.md`](write-operations.md). Tiers C–D remain unimplemented. The
+owner approval required by `plan.md` §6, §7 has been given for Tier B only.
 
 This note records *which* operations could be handed to the assistant and why most
 of the API surface is deliberately excluded.
 
 ## Current state
 
-The assistant cannot write. This service exposes no write endpoint, holds no write
-credential, and its financial client only issues `GET`. Tier A goes one step
-closer without crossing that line.
+With writes disabled, the assistant cannot write: it has no write tool, the
+financial client's read path only issues `GET`, and there is no approval surface.
+With writes enabled, it can *propose* the two Tier B actions; a separate,
+owner-scoped, single-use approval executes them. In both modes the model never
+originates a value that persists.
 
 ## What makes a write safe enough to hand to an assistant
 
@@ -40,14 +43,19 @@ idempotency problem, no new audit surface, and the "AI never mutates" guarantee
 stays literally true. Extraction is deterministic (`app/agent/drafts.py`), so a
 draft can only ever contain values the user typed.
 
-## Tier B — the first real writes, if Tier A is reviewed and accepted
+## Tier B — the first real writes (implemented behind a flag)
 
 | Operation | Endpoint | Why it is a candidate | Care needed |
 | --- | --- | --- | --- |
-| Create expense | `POST /expenses` | Reversible via delete; highest demand | Idempotency key (double-submit creates two rows) |
-| Set monthly budget | `PUT /budgets/{month}` | Month-keyed upsert, idempotent by construction | Show old vs. new; `POST /budgets` also exists for a first insert |
+| Create expense | `POST /expenses` | Reversible via delete; highest demand | Single-use approval; no retry on ambiguity; category revalidation |
+| Set monthly budget | `GET` then `POST`/`PUT /budgets` | Month-keyed and duplicate-proof | Re-read the month and choose create vs update; show old → new |
 
-These two cover most "log this for me" demand at the lowest risk.
+These two cover most "log this for me" demand at the lowest risk. The implemented
+version resolves the duplicate-submit concern at the approval layer (an atomic
+claim), not with an upstream idempotency key, because the existing API has none.
+Category matching is literal and a month that does not exist is created.
+
+Tier B reuses the Tier A parser: the model is not asked to emit write arguments.
 
 ## Tier C — plausible later, needs the confirmation machinery proven first
 
@@ -82,8 +90,9 @@ write to consider.
 
 These are the Phase 6 acceptance criteria in implementation terms:
 
-- **The model never performs the write.** It emits a *proposal*; execution runs on a
-  separate path with no model in the loop.
+- **The model never performs the write.** The deterministic parser emits the
+  *proposal*; execution runs on a separate path with no model in the loop, and no
+  write tool is registered with the model at all.
 - **Proposed values are auditable back to the user's message**, and the confirmation
   UI shows the literal values so a misparse is caught by a human.
 - **Approval is bound to a canonical hash of the arguments plus the user and the
@@ -92,11 +101,14 @@ These are the Phase 6 acceptance criteria in implementation terms:
 - **Re-read before applying**; on a timeout report "unknown — check your records"
   rather than retrying blindly.
 - **Every execution emits an audit event.**
-- **Write tools stay behind a disabled-by-default flag** until each one is reviewed.
+- **The write surface stays behind a disabled-by-default flag** until each action is
+  reviewed. (Tier B goes further: the model has no write tool, so the flag gates the
+  proposal and approval endpoints themselves.)
 
 ## Recommended sequencing
 
-1. Review Tier A running against real data (read-only launch).
-2. Enable Tier B behind a flag, starting with create-expense and set-budget.
+1. ~~Review Tier A running against real data (read-only launch).~~ Done.
+2. ~~Enable Tier B behind a flag, starting with create-expense and set-budget.~~ The
+   code and the flag exist; enabling is an operator decision per environment.
 3. Hold Tier C until the approval machinery has a track record.
 4. Treat Tier D as permanently excluded.

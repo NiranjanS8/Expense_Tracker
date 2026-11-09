@@ -1,4 +1,4 @@
-"""Response models for the conversation API.
+"""Response models for the conversation and approval APIs.
 
 Field names are snake_case on the Python side and camelCase on the wire, matching
 the existing Spring Boot JSON conventions the frontend already consumes.
@@ -33,3 +33,21 @@ class MessageView(_ApiModel):
 
 class ConversationDetail(ConversationSummary):
     messages: list[MessageView]
+
+
+class ApprovalDetail(_ApiModel):
+    label: str
+    value: str
+
+
+class ApprovalView(_ApiModel):
+    id: str
+    action: str
+    status: str
+    summary: str
+    details: list[ApprovalDetail]
+    consequences: list[str]
+    outcome: str | None = None
+    created_at: datetime
+    expires_at: datetime
+    resolved_at: datetime | None = None

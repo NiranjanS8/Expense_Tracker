@@ -1,8 +1,9 @@
 # Staging deployment runbook
 
 This runbook deploys the whole Expense Tracker stack — the Spring Boot API, its
-PostgreSQL database, the read-only assistant and the React app — with Docker
-Compose. It is the repeatable path the Phase 5 acceptance criteria asks for:
+PostgreSQL database, the assistant (read-only unless confirmed writes are
+enabled) and the React app — with Docker Compose. It is the repeatable path the
+Phase 5 acceptance criteria asks for:
 
 - an authenticated user can chat with the assistant,
 - streaming and errors render correctly,
@@ -19,8 +20,8 @@ are shown as configuration to apply, because those depend on where you host.
 | `frontend` | `frontend/Dockerfile` (Vite build served by nginx) | host port `FRONTEND_PORT` (default `8081`) | Serves the SPA and reverse-proxies `/api` and `/ai` |
 | `backend` | `backend.Dockerfile` (Maven build, Java 21) | the compose network only | Financial API, the only route to financial data |
 | `financial-db` | `postgres:17-alpine` | the compose network only | Spring Boot's own PostgreSQL |
-| `expense-ai` | `expense-ai/Dockerfile` (FastAPI) | the compose network, plus loopback `AI_PORT` for operators | Read-only assistant |
-| `ai-db` | `postgres:17-alpine` | the compose network only | Assistant conversations and messages |
+| `expense-ai` | `expense-ai/Dockerfile` (FastAPI) | the compose network, plus loopback `AI_PORT` for operators | Assistant; writes only through explicit approval |
+| `ai-db` | `postgres:17-alpine` | the compose network only | Assistant conversations, messages and pending approvals |
 
 Two invariants shape this layout:
 
@@ -92,6 +93,33 @@ Then walk the acceptance path in a browser at `http://localhost:8081`:
 > and key in `.env.staging` to show a grounded answer; every other step, including
 > the refusal in step 5, works without credentials.
 
+### Verifying confirmed writes (optional)
+
+Only when `WRITE_OPERATIONS_ENABLED=true`. The flag is read at startup, so apply it
+by recreating just the assistant (the `alembic upgrade head` in its command creates
+the `approval_requests` table):
+
+```bash
+docker compose -f compose.staging.yaml --env-file .env.staging up -d --no-deps expense-ai
+```
+
+Then, in **Assistant**:
+
+1. Send `Add a 12.50 coffee expense today by card`. The answer says nothing has
+   been saved and a card shows the literal values with **Approve and save** and
+   **Cancel**.
+2. Confirm the expense does **not** appear in **Expenses** yet.
+3. Press **Approve and save**. The card reports *Saved*.
+4. Repeat with a second proposal and press **Cancel**; confirm no expense is
+   created.
+5. Check the audit trail:
+   `docker compose -f compose.staging.yaml logs expense-ai | grep write_`. Expect
+   `write_proposal_created`, `write_approved` and `write_executed` for the first,
+   and `write_cancelled` for the second — never a log line containing amounts.
+
+Full design, threat model and limitations:
+`expense-ai/docs/write-operations.md`.
+
 ## 5. Configuration and secrets
 
 | Variable | Required | Notes |
@@ -104,6 +132,9 @@ Then walk the acceptance path in a browser at `http://localhost:8081`:
 | `JPA_DDL_AUTO` | no | `update` for a disposable staging database; `validate` anywhere the schema is managed outside the app |
 | `APP_SEED_ENABLED` | no | `true` seeds the demo user and sample expenses |
 | `METRICS_ENABLED` | no | Exposes `/metrics` on the assistant |
+| `WRITE_OPERATIONS_ENABLED` | no | `false` by default. Enables the proposal/approval surface; see `expense-ai/docs/write-operations.md` |
+| `APPROVAL_TTL_SECONDS` | no | How long a pending approval stays valid (default `600`) |
+| `APPROVAL_RATE_LIMIT_PER_MINUTE` | no | Per-user approve/cancel limit (default `10`) |
 | `LANGSMITH_TRACING` / `LANGSMITH_API_KEY` | no | Off by default; sends prompts and retrieved figures to a third party (see `expense-ai/docs/observability.md`) |
 
 `.env.staging` holds the only copy of these values and is git-ignored. For
@@ -220,3 +251,12 @@ docker compose -f compose.staging.yaml exec -T financial-db \
   volume and nothing deletes them, because the app has no retention or expiry job.
   The volume grows with use, so prune it on a schedule (or move exports to object
   storage) before the data matters.
+- Confirmed writes are **off** unless `WRITE_OPERATIONS_ENABLED=true`. Enabling
+  them makes financial changes possible; the approval row is the only authorisation
+  and it is single-use and owner-scoped. A write that times out is reported as
+  `unknown` and is not retried. There is no undo in the assistant: an expense must
+  be deleted and a budget re-set through the application screens. See
+  `expense-ai/docs/write-operations.md`.
+- Pending approvals expire after `APPROVAL_TTL_SECONDS` and are never cleaned up by
+  a background job; resolved and expired rows accumulate in `approval_requests`
+  (small, but prune them if your retention policy requires it).

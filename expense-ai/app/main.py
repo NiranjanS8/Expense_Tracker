@@ -24,6 +24,8 @@ from app.agent.nodes import AgentNodes
 from app.agent.service import ChatService
 from app.api.v1.health import router as health_router
 from app.api.v1.router import build_v1_router
+from app.approvals.repository import ApprovalRepository
+from app.approvals.service import ApprovalService
 from app.conversations.database import Database
 from app.conversations.repository import ConversationRepository
 from app.core.config import Settings, get_settings
@@ -87,6 +89,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     repository = ConversationRepository(database)
     app.state.conversation_repository = repository
 
+    # Resolve the client lazily so a test harness can substitute its transport.
+    approval_service = ApprovalService(
+        repository=ApprovalRepository(database),
+        client=lambda: app.state.expense_tracker_client,
+        ttl_seconds=settings.approval_ttl_seconds,
+    )
+    app.state.approval_service = approval_service
+
     # A misconfigured provider must not prevent startup: readiness reports it.
     try:
         app.state.model_provider = build_provider(settings)
@@ -98,6 +108,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         provider=lambda: app.state.model_provider,
         client=lambda: app.state.expense_tracker_client,
         registry=app.state.tool_registry,
+        approvals=approval_service,
         settings=settings,
     )
     app.state.chat_service = ChatService(
@@ -124,13 +135,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="Expense Tracker AI",
-        description="Read-only AI assistant over the Expense Tracker backend.",
+        description="AI assistant over the Expense Tracker backend; writes only through explicit approval.",
         version="0.1.0",
         lifespan=lifespan,
     )
     app.state.settings = resolved_settings
     app.state.chat_limiter = FixedWindowRateLimiter(
         max_requests=resolved_settings.chat_rate_limit_per_minute,
+        window_seconds=60.0,
+    )
+    app.state.approval_limiter = FixedWindowRateLimiter(
+        max_requests=resolved_settings.approval_rate_limit_per_minute,
         window_seconds=60.0,
     )
 

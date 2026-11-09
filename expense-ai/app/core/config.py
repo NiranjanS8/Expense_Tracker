@@ -58,7 +58,14 @@ class Settings(BaseSettings):
 
     max_request_bytes: int = Field(default=32_768, gt=0)
     chat_rate_limit_per_minute: int = Field(default=20, gt=0)
+    approval_rate_limit_per_minute: int = Field(default=10, gt=0)
     cors_allow_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+
+    # Phase 6 write operations. Off by default: the assistant may *propose* a
+    # change, but the approval surface that can execute one stays closed until an
+    # owner deliberately enables it. See docs/write-operations.md.
+    write_operations_enabled: bool = False
+    approval_ttl_seconds: int = Field(default=600, ge=30, le=3600)
 
     # Observability. Metrics are always recorded in-process; the scrape endpoint
     # stays closed unless enabled and reachable only from a trusted network.

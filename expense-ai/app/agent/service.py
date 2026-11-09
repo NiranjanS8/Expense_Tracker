@@ -17,6 +17,7 @@ from langgraph.errors import GraphRecursionError
 from app.agent.events import StreamEvent, message_complete, message_start, status, token
 from app.agent.events import draft as draft_event
 from app.agent.events import error as error_event
+from app.agent.events import proposal as proposal_event
 from app.agent.graph import CompiledAgentGraph
 from app.agent.policies import conversation_title
 from app.agent.state import AgentContext, AgentState
@@ -35,6 +36,7 @@ _NODE_STAGES = {
     "execute_tool": "retrieving",
     "verify_result": "verifying",
     "compose_draft": "drafting",
+    "compose_write": "proposing",
     "compose_answer": "composing",
 }
 
@@ -145,12 +147,25 @@ class ChatService:
 
         # A draft is a form prefill, not an answer of its own: it precedes the
         # completion so a client can attach it to the message being finalised.
-        proposal = final.get("draft")
-        if isinstance(proposal, dict):
+        draft_payload = final.get("draft")
+        if isinstance(draft_payload, dict):
             yield draft_event(
-                kind=str(proposal.get("kind", "")),
-                fields=_as_fields(proposal.get("fields")),
-                summary=str(proposal.get("summary", "")),
+                kind=str(draft_payload.get("kind", "")),
+                fields=_as_fields(draft_payload.get("fields")),
+                summary=str(draft_payload.get("summary", "")),
+            )
+
+        # An approval request is likewise attached to the message, and is still
+        # not a change: the user resolves it through its own endpoint.
+        written = final.get("proposal")
+        if isinstance(written, dict):
+            yield proposal_event(
+                approval_id=str(written.get("id", "")),
+                action=str(written.get("action", "")),
+                summary=str(written.get("summary", "")),
+                details=_as_details(written.get("details")),
+                consequences=_as_strings(written.get("consequences")),
+                expires_at=str(written.get("expires_at", "")),
             )
 
         # Streamed deltas are provisional; a turn whose answer was published that
@@ -184,3 +199,17 @@ def _as_message_id(value: object) -> int | None:
 
 def _as_fields(value: object) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _as_details(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        {"label": str(item["label"]), "value": str(item["value"])}
+        for item in value
+        if isinstance(item, dict) and "label" in item and "value" in item
+    ]
+
+
+def _as_strings(value: object) -> list[str]:
+    return [str(item) for item in value] if isinstance(value, list) else []

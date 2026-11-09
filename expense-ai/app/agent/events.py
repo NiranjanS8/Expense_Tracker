@@ -12,6 +12,10 @@ never streamed sends its whole answer as a single ``token`` instead.
 ``draft`` carries the values for one of the application's own forms. It is a
 proposal only: the client pre-fills a screen with it and the user saves it, so a
 draft is never itself a change.
+
+``proposal`` carries a durable approval request. It is emitted only when confirmed
+writes are enabled, and it too changes nothing: the user resolves it through a
+separate endpoint, and the approval is single-use.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ MESSAGE_START = "message_start"
 STATUS = "status"
 TOKEN = "token"
 DRAFT = "draft"
+PROPOSAL = "proposal"
 MESSAGE_COMPLETE = "message_complete"
 ERROR = "error"
 
@@ -51,6 +56,29 @@ def token(*, text: str) -> StreamEvent:
 def draft(*, kind: str, fields: dict[str, Any], summary: str) -> StreamEvent:
     """Values for one of the application's own forms; nothing has been saved."""
     return StreamEvent(DRAFT, {"kind": kind, "fields": fields, "summary": summary})
+
+
+def proposal(
+    *,
+    approval_id: str,
+    action: str,
+    summary: str,
+    details: list[dict[str, str]],
+    consequences: list[str],
+    expires_at: str,
+) -> StreamEvent:
+    """A durable change awaiting this user's explicit approval; nothing is saved yet."""
+    return StreamEvent(
+        PROPOSAL,
+        {
+            "id": approval_id,
+            "action": action,
+            "summary": summary,
+            "details": details,
+            "consequences": consequences,
+            "expiresAt": expires_at,
+        },
+    )
 
 
 def message_complete(

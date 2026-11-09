@@ -29,6 +29,8 @@ class AgentState(TypedDict, total=False):
     tool_error: str | None
     # A form prefill the user still has to save; never a change by itself.
     draft: dict[str, Any] | None
+    # A durable approval the user may confirm; it has no effect until they do.
+    proposal: dict[str, Any] | None
     answer: str | None
     answer_message_id: int | None
     # Set when the answer was already published as stream deltas, so the

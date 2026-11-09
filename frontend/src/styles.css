@@ -1294,6 +1294,115 @@ textarea:focus {
   font-size: 0.75rem;
 }
 
+.chat-proposal {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border-strong);
+  background: var(--card-elevated);
+}
+
+.chat-proposal.is-pending {
+  border-color: rgba(107, 203, 119, 0.45);
+  background: rgba(107, 203, 119, 0.07);
+}
+
+.chat-proposal.is-failed,
+.chat-proposal.is-unknown {
+  border-color: rgba(239, 83, 80, 0.45);
+}
+
+.chat-proposal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chat-proposal__kind {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+
+.chat-proposal__status {
+  font-size: 0.72rem;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+}
+
+.chat-proposal.is-pending .chat-proposal__status {
+  border-color: rgba(107, 203, 119, 0.3);
+  color: var(--primary);
+}
+
+.chat-proposal__summary {
+  margin: 0;
+  font-weight: 600;
+}
+
+.chat-proposal__details {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.chat-proposal__details div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.chat-proposal__details dt {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.chat-proposal__details dd {
+  margin: 0;
+  font-size: 0.85rem;
+  text-align: right;
+}
+
+.chat-proposal__consequences {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.chat-proposal__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chat-proposal__outcome {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--primary);
+}
+
+.chat-proposal.is-failed .chat-proposal__outcome,
+.chat-proposal.is-unknown .chat-proposal__outcome {
+  color: var(--danger);
+}
+
+.chat-proposal__error {
+  margin: 0;
+}
+
+.chat-proposal__note {
+  font-size: 0.75rem;
+}
+
 .chat-status {
   display: flex;
   align-items: center;

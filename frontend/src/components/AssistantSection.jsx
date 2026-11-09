@@ -1,10 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ClipboardList, MessageSquarePlus, Send, Sparkles, Square, Trash2 } from "lucide-react";
+import {
+  ClipboardList,
+  MessageSquarePlus,
+  Send,
+  ShieldCheck,
+  Sparkles,
+  Square,
+  Trash2,
+  X,
+} from "lucide-react";
 
 import {
+  approveProposal,
+  cancelProposal,
   deleteConversation,
   getConversation,
   listConversations,
+  listPendingApprovals,
   streamChat,
 } from "../aiClient";
 import { draftFormLabel } from "../drafts";
@@ -19,6 +31,7 @@ const STATUS_LABELS = {
   retrieving: "Retrieving your data",
   verifying: "Verifying the data",
   drafting: "Preparing a draft",
+  proposing: "Preparing a change for approval",
   composing: "Writing the answer",
 };
 
@@ -26,6 +39,21 @@ const TERMINATION_NOTES = {
   no_data: "No matching data was found.",
   tool_error: "A dependent service was unavailable for this answer.",
   model_error: "The assistant could not compose an answer.",
+};
+
+const PROPOSAL_ACTION_LABELS = {
+  create_expense: "New expense",
+  set_budget: "Budget update",
+};
+
+const APPROVAL_STATUS_LABELS = {
+  pending: "Awaiting your approval",
+  executing: "Saving…",
+  executed: "Saved",
+  failed: "Not saved",
+  unknown: "Outcome unknown",
+  cancelled: "Cancelled",
+  expired: "Expired",
 };
 
 const TOOL_LABELS = {
@@ -61,7 +89,76 @@ function formatTimestamp(value) {
   }).format(date);
 }
 
-export default function AssistantSection({ token, onUnauthorized, onApplyDraft }) {
+function ProposalCard({ proposal, busy, onApprove, onCancel }) {
+  const status = proposal.status || "pending";
+  const pending = status === "pending";
+
+  return (
+    <div className={`chat-proposal ${pending ? "is-pending" : `is-${status}`}`}>
+      <div className="chat-proposal__head">
+        <span className="chat-proposal__kind">
+          {PROPOSAL_ACTION_LABELS[proposal.action] || "Proposed change"}
+        </span>
+        <span className="chat-proposal__status">{APPROVAL_STATUS_LABELS[status] || status}</span>
+      </div>
+
+      <p className="chat-proposal__summary">{proposal.summary}</p>
+
+      {(proposal.details || []).length > 0 && (
+        <dl className="chat-proposal__details">
+          {proposal.details.map((detail) => (
+            <div key={detail.label}>
+              <dt>{detail.label}</dt>
+              <dd>{detail.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      {(proposal.consequences || []).length > 0 && (
+        <ul className="chat-proposal__consequences">
+          {proposal.consequences.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      )}
+
+      {proposal.error && <p className="form-error chat-proposal__error">{proposal.error}</p>}
+      {proposal.outcome && <p className="chat-proposal__outcome">{proposal.outcome}</p>}
+
+      {pending && (
+        <div className="chat-proposal__actions">
+          <button
+            className="primary-button"
+            type="button"
+            disabled={busy}
+            onClick={() => onApprove(proposal)}
+          >
+            <ShieldCheck size={15} />
+            Approve and save
+          </button>
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={busy}
+            onClick={() => onCancel(proposal)}
+          >
+            <X size={15} />
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {pending && proposal.expiresAt && (
+        <span className="muted chat-proposal__note">
+          Expires {formatTimestamp(proposal.expiresAt)} · nothing is saved until you approve.
+        </span>
+      )}
+    </div>
+  );
+}
+
+export default function AssistantSection({ token, onUnauthorized, onApplyDraft, onDataChanged }) {
   const [conversations, setConversations] = useState([]);
   const [conversationId, setConversationId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -71,6 +168,7 @@ export default function AssistantSection({ token, onUnauthorized, onApplyDraft }
   const [statusTool, setStatusTool] = useState("");
   const [error, setError] = useState("");
   const [loadingConversation, setLoadingConversation] = useState(false);
+  const [resolvingApproval, setResolvingApproval] = useState("");
 
   const abortRef = useRef(null);
   const threadRef = useRef(null);
@@ -125,6 +223,53 @@ export default function AssistantSection({ token, onUnauthorized, onApplyDraft }
     updateLastAssistant((last) => ({ ...last, draft: payload }));
   }
 
+  function attachProposal(payload) {
+    updateLastAssistant((last) => ({
+      ...last,
+      proposal: { ...payload, status: "pending" },
+    }));
+  }
+
+  function updateProposal(approvalId, update) {
+    setMessages((current) =>
+      current.map((message) =>
+        message.proposal?.id === approvalId
+          ? { ...message, proposal: { ...message.proposal, ...update } }
+          : message,
+      ),
+    );
+  }
+
+  async function resolveProposal(proposal, action) {
+    setResolvingApproval(proposal.id);
+    setError("");
+
+    try {
+      const result =
+        action === "approve"
+          ? await approveProposal(token, proposal.id)
+          : await cancelProposal(token, proposal.id);
+
+      updateProposal(proposal.id, {
+        status: result.status,
+        outcome: result.outcome,
+        error: "",
+      });
+
+      if (action === "approve" && result.status === "executed") {
+        onDataChanged?.();
+      }
+    } catch (caught) {
+      if (caught.status === 401) {
+        unauthorizedRef.current();
+        return;
+      }
+      updateProposal(proposal.id, { error: caught.message });
+    } finally {
+      setResolvingApproval("");
+    }
+  }
+
   function clearEmptyAssistant() {
     setMessages((current) => {
       const last = current[current.length - 1];
@@ -174,15 +319,35 @@ export default function AssistantSection({ token, onUnauthorized, onApplyDraft }
 
     try {
       const detail = await getConversation(token, id);
-      setMessages(
-        detail.messages.map((message) => ({
+
+      // Approvals survive a reload; writes-disabled deployments answer 404 here,
+      // which simply means there is nothing to reattach.
+      let pending = [];
+      try {
+        pending = await listPendingApprovals(token, id);
+      } catch (caught) {
+        if (caught.status === 401) {
+          throw caught;
+        }
+      }
+
+      setMessages([
+        ...detail.messages.map((message) => ({
           id: message.id,
           role: message.role,
           content: message.content,
           toolCalls: [],
           termination: "",
         })),
-      );
+        ...pending.map((proposal) => ({
+          id: `approval-${proposal.id}`,
+          role: "assistant",
+          content: "This change is still waiting for your approval.",
+          toolCalls: [],
+          termination: "",
+          proposal: { ...proposal, status: "pending" },
+        })),
+      ]);
     } catch (caught) {
       if (caught.status === 401) {
         unauthorizedRef.current();
@@ -269,6 +434,10 @@ export default function AssistantSection({ token, onUnauthorized, onApplyDraft }
           }
           if (name === "draft") {
             attachDraft(payload);
+            return;
+          }
+          if (name === "proposal") {
+            attachProposal(payload);
             return;
           }
           if (name === "message_complete") {
@@ -369,8 +538,8 @@ export default function AssistantSection({ token, onUnauthorized, onApplyDraft }
             <h2>Ask about your money</h2>
           </div>
           <p className="muted">
-            Read-only: answers come from your own Expense Tracker data and nothing is ever changed.
-            I can draft an entry for you, but you save it yourself.
+            Answers come from your own Expense Tracker data. I can prepare an expense or budget
+            change, but nothing is saved until you approve it.
           </p>
         </header>
 
@@ -424,6 +593,14 @@ export default function AssistantSection({ token, onUnauthorized, onApplyDraft }
                       Nothing is saved until you press Save.
                     </span>
                   </div>
+                )}
+                {message.proposal && (
+                  <ProposalCard
+                    proposal={message.proposal}
+                    busy={resolvingApproval === message.proposal.id}
+                    onApprove={(proposal) => void resolveProposal(proposal, "approve")}
+                    onCancel={(proposal) => void resolveProposal(proposal, "cancel")}
+                  />
                 )}
               </article>
             );

@@ -143,25 +143,119 @@ class ExpenseTrackerClient:
 
         return _parse_current_user(response)
 
+    async def post_json(
+        self,
+        path: str,
+        *,
+        token: AccessToken,
+        payload: Mapping[str, object],
+        correlation_id: str | None = None,
+        missing_message: str | None = None,
+    ) -> object:
+        """Create one record through the confirmed-write path.
+
+        Writes are never retried: a repeated ``POST`` can create a second row, so
+        the caller instead resolves the uncertainty (see ``approvals.service``).
+        """
+        return await self._write_json(
+            "POST",
+            path,
+            token=token,
+            payload=payload,
+            correlation_id=correlation_id,
+            missing_message=missing_message,
+        )
+
+    async def put_json(
+        self,
+        path: str,
+        *,
+        token: AccessToken,
+        payload: Mapping[str, object],
+        correlation_id: str | None = None,
+        missing_message: str | None = None,
+    ) -> object:
+        """Replace one record through the confirmed-write path; never retried."""
+        return await self._write_json(
+            "PUT",
+            path,
+            token=token,
+            payload=payload,
+            correlation_id=correlation_id,
+            missing_message=missing_message,
+        )
+
+    async def _write_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        token: AccessToken,
+        payload: Mapping[str, object],
+        correlation_id: str | None,
+        missing_message: str | None,
+    ) -> object:
+        response = await self._request(
+            path,
+            method=method,
+            token=token,
+            json=payload,
+            correlation_id=correlation_id,
+            retry=False,
+        )
+        status = response.status_code
+
+        if status in (401, 403):
+            raise UnauthenticatedError("The access token is not valid.")
+        if status == 429:
+            logger.warning("event=upstream_rate_limited path=%s", path)
+            raise RateLimitedError(headers=_retry_after_headers(response))
+        if status == 404:
+            raise NotFoundError(missing_message)
+        if 400 <= status < 500:
+            logger.warning("event=upstream_rejected_write path=%s status=%s", path, status)
+            raise InvalidRequestError(_write_rejection_message(response))
+        if status >= 500:
+            # The record may or may not have been committed; the caller must treat
+            # this as an unknown outcome rather than a failure.
+            logger.warning("event=upstream_write_error path=%s status=%s", path, status)
+            raise UpstreamUnavailableError()
+        if status == 204:
+            return None
+        if status not in (200, 201):
+            logger.warning("event=upstream_unexpected_write_status path=%s status=%s", path, status)
+            raise UpstreamUnavailableError()
+
+        try:
+            return response.json()
+        except ValueError as exception:
+            logger.warning("event=upstream_invalid_write_json path=%s", path)
+            raise UpstreamUnavailableError() from exception
+
     async def _request(
         self,
         path: str,
         *,
         token: AccessToken,
+        method: str = "GET",
         params: JsonParameters | None = None,
+        json: Mapping[str, object] | None = None,
         correlation_id: str | None = None,
+        retry: bool = True,
     ) -> httpx.Response:
         headers = {"Authorization": f"Bearer {token.reveal()}"}
         if correlation_id is not None:
             headers[CORRELATION_HEADER] = correlation_id
+        if json is not None:
+            headers["Content-Type"] = "application/json"
 
         url = self._url(path)
-        attempts = self._max_retries + 1
+        attempts = self._max_retries + 1 if retry else 1
 
         for attempt in range(1, attempts + 1):
             is_last_attempt = attempt == attempts
             try:
-                response = await self._client.get(url, headers=headers, params=params)
+                response = await self._client.request(method, url, headers=headers, params=params, json=json)
             except httpx.TimeoutException as exception:
                 if is_last_attempt:
                     raise UpstreamTimeoutError() from exception
@@ -201,6 +295,29 @@ class ExpenseTrackerClient:
 def _retry_after_headers(response: httpx.Response) -> dict[str, str]:
     retry_after = response.headers.get("Retry-After")
     return {"Retry-After": retry_after} if retry_after else {}
+
+
+def _write_rejection_message(response: httpx.Response) -> str | None:
+    """Spring Boot's own validation message, which is safe to show to its owner.
+
+    Only the two stable, human-readable fields are read, and the result is
+    truncated; no upstream payload ever reaches the client verbatim.
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+
+    parts: list[str] = []
+    message = body.get("message")
+    if isinstance(message, str) and message.strip():
+        parts.append(message.strip())
+    details = body.get("details")
+    if isinstance(details, list):
+        parts.extend(item.strip() for item in (str(value) for value in details[:2]) if item)
+    return "; ".join(parts)[:200] or None
 
 
 def _parse_current_user(response: httpx.Response) -> AuthenticatedUser:

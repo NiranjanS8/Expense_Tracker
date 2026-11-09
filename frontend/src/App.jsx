@@ -782,6 +782,7 @@ export default function App() {
             token={token}
             onUnauthorized={() => logout("Your session expired. Please log in again.")}
             onApplyDraft={applyDraft}
+            onDataChanged={() => Promise.all([loadOverview(), loadBudgets()])}
           />
         )}
       </section>

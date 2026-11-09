@@ -1,4 +1,4 @@
-// Client for the read-only assistant (the `expense-ai` service).
+// Client for the assistant (the `expense-ai` service).
 //
 // The browser always talks to the assistant through this app's own origin: Vite
 // proxies `/ai` in development and nginx does the same in staging. Keeping the
@@ -83,6 +83,29 @@ export function getConversation(token, conversationId, signal) {
 export function deleteConversation(token, conversationId) {
   return aiRequest(`/conversations/${encodeURIComponent(conversationId)}`, {
     method: "DELETE",
+    token,
+  });
+}
+
+// Confirmed writes. A proposal event carries an approval id; these endpoints are
+// the only way it can become a change, and each approval can be used once.
+export function listPendingApprovals(token, conversationId, signal) {
+  return aiRequest(`/approvals?conversationId=${encodeURIComponent(conversationId)}`, {
+    token,
+    signal,
+  });
+}
+
+export function approveProposal(token, approvalId) {
+  return aiRequest(`/approvals/${encodeURIComponent(approvalId)}/approve`, {
+    method: "POST",
+    token,
+  });
+}
+
+export function cancelProposal(token, approvalId) {
+  return aiRequest(`/approvals/${encodeURIComponent(approvalId)}/cancel`, {
+    method: "POST",
     token,
   });
 }

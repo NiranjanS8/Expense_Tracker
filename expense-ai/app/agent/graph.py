@@ -4,6 +4,11 @@ One graph, no autonomous loop: context is loaded, intent is classified, at most 
 few allowlisted read-only tools are called, and every path ends at
 ``persist_and_trace``. Routing is deterministic code, so model output can never
 widen the allowlist or choose a user.
+
+A request to record something takes ``compose_write`` instead of a tool. That node
+produces a form draft, or — when confirmed writes are enabled and the message is
+complete — a durable approval request. Neither path consults the model, and the
+approval still changes nothing until its owner approves it separately.
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ def build_agent_graph(nodes: AgentNodes, *, max_tool_calls: int) -> CompiledAgen
         if intent == DATA_INTENT:
             return "plan"
         if intent == DRAFT_INTENT:
-            return "compose_draft"
+            return "compose_write"
         return "compose_answer"
 
     def after_plan(state: AgentState) -> str:
@@ -60,6 +65,7 @@ def build_agent_graph(nodes: AgentNodes, *, max_tool_calls: int) -> CompiledAgen
     graph.add_node("execute_tool", nodes.execute_tool)
     graph.add_node("verify_result", nodes.verify_result)
     graph.add_node("compose_draft", nodes.compose_draft)
+    graph.add_node("compose_write", nodes.compose_write)
     graph.add_node("compose_answer", nodes.compose_answer)
     graph.add_node("persist_and_trace", nodes.persist_and_trace)
 
@@ -70,7 +76,7 @@ def build_agent_graph(nodes: AgentNodes, *, max_tool_calls: int) -> CompiledAgen
         after_classify,
         {
             "plan": "plan",
-            "compose_draft": "compose_draft",
+            "compose_write": "compose_write",
             "compose_answer": "compose_answer",
         },
     )
@@ -101,6 +107,7 @@ def build_agent_graph(nodes: AgentNodes, *, max_tool_calls: int) -> CompiledAgen
     )
     graph.add_edge("compose_answer", "persist_and_trace")
     graph.add_edge("compose_draft", "persist_and_trace")
+    graph.add_edge("compose_write", "persist_and_trace")
     graph.add_edge("persist_and_trace", END)
 
     return graph.compile()

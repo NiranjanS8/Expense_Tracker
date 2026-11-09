@@ -77,6 +77,15 @@ class NotFoundError(AppError):
         return "The requested resource was not found."
 
 
+class ConflictError(AppError):
+    status_code = 409
+    code = "conflict"
+
+    @classmethod
+    def default_message(cls) -> str:
+        return "The request conflicts with the current state."
+
+
 class RateLimitedError(AppError):
     status_code = 429
     code = "rate_limited"

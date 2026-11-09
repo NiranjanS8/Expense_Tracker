@@ -23,6 +23,8 @@ from app.agent.events import token
 from app.agent.policies import DATA_INTENT, classify_intent
 from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.state import AgentContext, AgentState
+from app.agent.writes import CategoryOption, extract_write
+from app.approvals.service import CREATE_EXPENSE, ApprovalService
 from app.conversations.repository import ASSISTANT_ROLE, USER_ROLE
 from app.core.config import Settings
 from app.core.errors import AppError
@@ -71,11 +73,13 @@ class AgentNodes:
         provider: Callable[[], ModelProvider | None],
         client: Callable[[], ExpenseTrackerClient],
         registry: ToolRegistry,
+        approvals: ApprovalService,
         settings: Settings,
     ) -> None:
         self._provider = provider
         self._client = client
         self._registry = registry
+        self._approvals = approvals
         self._settings = settings
         self._tool_specs = tuple(
             ToolSpec(
@@ -230,6 +234,85 @@ class AgentNodes:
             "termination": "drafted",
             "draft": {"kind": proposal.kind, "fields": proposal.fields, "summary": proposal.summary},
         }
+
+    async def compose_write(self, state: AgentState, runtime: Runtime[AgentContext]) -> AgentState:
+        """Record a change for explicit approval, or fall back to a form draft.
+
+        With confirmed writes enabled the proposal is parsed from the caller's own
+        words and persisted as a durable, owner-scoped approval. It still changes
+        nothing: only a separate approval call can execute it. No model tool is
+        involved, so the model cannot originate a value that later persists.
+        """
+        if not self._settings.write_operations_enabled:
+            return await self.compose_draft(state, runtime)
+
+        context = runtime.context
+        today = date.today()
+        intent = extract_write(state["user_message"], today=today)
+
+        # A category is only resolved when the user named one; the lookup supplies
+        # the owner's own category names, never a model guess.
+        if (
+            intent is not None
+            and intent.action == CREATE_EXPENSE
+            and intent.arguments.get("categoryId") is None
+        ):
+            intent = (
+                extract_write(
+                    state["user_message"],
+                    today=today,
+                    categories=await self._categories(context),
+                )
+                or intent
+            )
+
+        if intent is None:
+            return await self.compose_draft(state, runtime)
+
+        record = await self._approvals.propose(
+            owner_id=context.user_context.user.user_id,
+            conversation_id=context.conversation_id,
+            action=intent.action,
+            resource_id=intent.resource_id,
+            arguments=intent.arguments,
+            summary=intent.summary,
+            details=intent.details,
+            consequences=intent.consequences,
+        )
+        return {
+            "answer": intent.message,
+            "termination": "proposed",
+            "proposal": {
+                "id": record.id,
+                "action": record.action,
+                "summary": record.summary,
+                "details": record.details,
+                "consequences": record.consequences,
+                "expires_at": record.expires_at.isoformat(),
+            },
+        }
+
+    async def _categories(self, context: AgentContext) -> tuple[CategoryOption, ...]:
+        """The owner's category names, used only to match what the user typed."""
+        try:
+            body = await self._client().get_json(
+                "/categories",
+                token=context.user_context.token,
+                correlation_id=context.user_context.correlation_id,
+                missing_message="The category list is unavailable.",
+            )
+        except AppError:
+            logger.warning("event=write_category_lookup_failed")
+            return ()
+        if not isinstance(body, list):
+            return ()
+        return tuple(
+            CategoryOption(id=item["id"], name=item["name"])
+            for item in body
+            if isinstance(item, dict)
+            and isinstance(item.get("id"), int)
+            and isinstance(item.get("name"), str)
+        )
 
     async def compose_answer(self, state: AgentState, runtime: Runtime[AgentContext]) -> AgentState:
         error_code = state.get("error_code")

@@ -56,7 +56,9 @@ Phase 4 — evaluation and hardening. Implemented:
 - Optional trace export (off by default); see [`docs/observability.md`](docs/observability.md)
   and [`docs/operations.md`](docs/operations.md).
 
-Every answer is a read-only answer. Nothing in this service mutates financial data.
+Answers are read-only by default. Confirmed writes are opt-in and gated: the
+assistant can only propose an expense or budget, and a separate, single-use owner
+approval executes it. See [Confirmed writes](#confirmed-writes).
 
 ## Drafts
 
@@ -84,6 +86,33 @@ rather than to an unwanted one.
 
 See [`docs/phase-6-scoping.md`](docs/phase-6-scoping.md) for which write
 operations could ever follow a draft, and why most of the API surface is excluded.
+
+## Confirmed writes
+
+Off by default (`WRITE_OPERATIONS_ENABLED=false`). When enabled, two actions can
+become a change, and only after an explicit approval:
+
+| Action | Effect |
+| --- | --- |
+| `create_expense` | Adds one expense through `POST /expenses` |
+| `set_budget` | Sets one month's budget, creating it if absent |
+
+The write path has **no model in it**. The same deterministic parser that builds a
+draft builds a proposal, so the model cannot originate a value that persists.
+A proposal is stored as a durable, owner-scoped approval and streamed as a
+`proposal` event; nothing is written. The user approves it through
+`POST /api/v1/approvals/{id}/approve`, which:
+
+- is bound to the owner, action, resource and a canonical hash of the arguments;
+- claims the approval with a conditional update, so it executes at most once;
+- re-reads current state first (a budget month, a named category);
+- never retries a write; a timeout or `5xx` is reported as **unknown**, with the
+  user told to check their records;
+- logs an audit event and records a metric.
+
+Cancelling, expiry (`APPROVAL_TTL_SECONDS`), and a repeated approval all prevent
+execution. Full design and runbook:
+[`docs/write-operations.md`](docs/write-operations.md).
 
 ## Tools
 
@@ -115,9 +144,12 @@ failures.
 | `GET` | `/api/v1/conversations` | List the caller's conversations |
 | `GET` | `/api/v1/conversations/{id}` | Read one conversation and its messages |
 | `DELETE` | `/api/v1/conversations/{id}` | Delete one conversation |
+| `GET` | `/api/v1/approvals?conversationId=` | Still-pending write approvals (writes enabled only) |
+| `POST` | `/api/v1/approvals/{id}/approve` | Execute one approval, once |
+| `POST` | `/api/v1/approvals/{id}/cancel` | Cancel a pending approval |
 
-All four require `Authorization: Bearer <token>`. A conversation id owned by
-another user is reported as `404`, never `403`, so ids cannot be probed.
+All require `Authorization: Bearer <token>`. A conversation or approval id owned
+by another user is reported as `404`, never `403`, so ids cannot be probed.
 
 `POST /api/v1/chat` body: `{ "message": "...", "conversation_id": "optional" }`.
 Omit `conversation_id` to start a new conversation (its title is taken from the
@@ -133,6 +165,7 @@ The response is `text/event-stream` with typed events:
 | `status` | `{ stage, tool? }` — e.g. `planning`, `retrieving` |
 | `token` | `{ text }` — a fragment of the answer as the model produces it |
 | `draft` | `{ kind, fields, summary }` — values for one of the app's forms; nothing saved |
+| `proposal` | `{ id, action, summary, details, consequences, expiresAt }` — an approval request; nothing saved |
 | `message_complete` | `{ conversationId, messageId, content, termination, toolCalls }` |
 | `error` | `{ code, message, correlationId }` |
 
@@ -149,9 +182,10 @@ arguments that arrive in fragments, so answers arrive as they are written.
 > single `token` instead. Prose from an ungrounded planning call is never
 > published at all, so invented figures cannot appear even transiently.
 >
-> A `draft` event precedes `message_complete` so a client can attach it to the
-> message being finalised. Ignoring it is safe: the answer text still describes
-> the proposal, and nothing has been saved either way.
+> A `draft` or `proposal` event precedes `message_complete` so a client can attach
+> it to the message being finalised. Ignoring either is safe: the answer text still
+> describes the proposal, and nothing has been saved. A `proposal` has no effect
+> until it is approved through its own endpoint.
 
 ## The workflow
 
@@ -161,13 +195,16 @@ arguments that arrive in fragments, so answers arrive as they are written.
 load_context -> classify_intent -> plan -> validate_arguments -> authorize_tool
                                         -> execute_tool -> verify_result
                                         -> (loop, bounded) -> plan
-                                 -> compose_draft -> persist_and_trace
+                                 -> compose_write -> persist_and_trace
+                                    (draft or approval proposal)
               -> compose_answer -> persist_and_trace
 ```
 
 - `classify_intent` is a deterministic keyword gate: only finance questions may
   spend a tool call, and a request to record something is diverted to
-  `compose_draft` before it can reach a tool.
+  `compose_write` before it can reach a tool. `compose_write` produces a draft, or
+  — when confirmed writes are enabled and the message is complete — a durable
+  approval request. Neither path involves the model.
 - The model is given the allowlisted tool schemas and may request a tool; the
   registry validates its arguments and the graph enforces the per-turn tool
   budget (`AGENT_MAX_TOOL_CALLS`) and a recursion limit (`AGENT_RECURSION_LIMIT`).
@@ -313,6 +350,9 @@ All settings are read from the environment or `.env`. See `.env.example`.
 | `<PROVIDER>_API_KEY` | Credential for the selected provider only |
 | `MAX_REQUEST_BYTES` | Rejects larger request bodies with `413` |
 | `CHAT_RATE_LIMIT_PER_MINUTE` | Per-user chat limit |
+| `WRITE_OPERATIONS_ENABLED` | Expose the proposal/approval surface; `false` by default |
+| `APPROVAL_TTL_SECONDS` | How long a pending approval stays valid (default `600`) |
+| `APPROVAL_RATE_LIMIT_PER_MINUTE` | Per-user approve/cancel limit |
 | `METRICS_ENABLED` | Expose `GET /metrics` (Prometheus text); `false` by default |
 | `LANGSMITH_TRACING` | Enable optional trace export; off by default |
 | `LANGSMITH_API_KEY` | Credential for the tracing backend |
@@ -364,9 +404,14 @@ User identity is never taken from chat text, request bodies, or tool arguments.
 - For a data question the model may only answer from tool results, so an
   ambiguous data question is met with a deterministic "rephrase with a period"
   refusal rather than a model-written clarifying question.
-- Draft extraction reads amounts, dates and wording with deterministic parsing,
-  so an unusual phrasing ("log my morning coffee, twelve fifty") may not produce a
-  draft; the assistant asks for the amount rather than guessing at it.
+- Draft and proposal extraction read amounts, dates and wording with deterministic
+  parsing, so an unusual phrasing ("log my morning coffee, twelve fifty") may not
+  produce either; the assistant asks for the amount rather than guessing at it.
+- Confirmed writes have no undo in the assistant: a created expense can only be
+  deleted, and a budget only re-set, through the application screens. `set_budget`
+  sets a month's value; it does not add to it.
+- A write that times out or receives a `5xx` is recorded as `unknown` and is never
+  retried automatically; the user must check their records.
 - Conversation history is bounded when sent to the model
   (`AGENT_HISTORY_MESSAGES`) and when returned by the API
   (`CONVERSATION_MESSAGE_LIMIT`); a retention/cleanup policy for stored

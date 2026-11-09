@@ -36,6 +36,8 @@ _METRIC_HELP: dict[str, str] = {
     "expense_ai_model_cost_usd_total": "Estimated model cost in USD, by provider and model.",
     "expense_ai_rate_limit_rejections_total": "Requests rejected by a rate limiter.",
     "expense_ai_auth_denials_total": "Requests rejected for authentication or authorization.",
+    "expense_ai_write_proposals_total": "Write proposals created, by action.",
+    "expense_ai_write_executions_total": "Confirmed writes attempted, by action and outcome.",
 }
 
 
@@ -219,6 +221,12 @@ class MetricsRegistry:
 
     def record_auth_denial(self, *, reason: str) -> None:
         self.increment("expense_ai_auth_denials_total", {"reason": reason})
+
+    def record_write_proposal(self, *, action: str) -> None:
+        self.increment("expense_ai_write_proposals_total", {"action": action})
+
+    def record_write_execution(self, *, action: str, outcome: str) -> None:
+        self.increment("expense_ai_write_executions_total", {"action": action, "outcome": outcome})
 
 
 metrics = MetricsRegistry()
