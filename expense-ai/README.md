@@ -89,13 +89,15 @@ operations could ever follow a draft, and why most of the API surface is exclude
 
 ## Confirmed writes
 
-Off by default (`WRITE_OPERATIONS_ENABLED=false`). When enabled, two actions can
+Off by default (`WRITE_OPERATIONS_ENABLED=false`). When enabled, four actions can
 become a change, and only after an explicit approval:
 
 | Action | Effect |
 | --- | --- |
 | `create_expense` | Adds one expense through `POST /expenses` |
 | `set_budget` | Sets one month's budget, creating it if absent |
+| `set_recurring_status` | Pauses or resumes one recurring rule |
+| `create_category` | Adds one custom category |
 
 The write path has **no model in it**. The same deterministic parser that builds a
 draft builds a proposal, so the model cannot originate a value that persists.
@@ -105,9 +107,11 @@ A proposal is stored as a durable, owner-scoped approval and streamed as a
 
 - is bound to the owner, action, resource and a canonical hash of the arguments;
 - claims the approval with a conditional update, so it executes at most once;
-- re-reads current state first (a budget month, a named category);
-- never retries a write; a timeout or `5xx` is reported as **unknown**, with the
-  user told to check their records;
+- re-reads current state first (a budget month, a named category, a rule's state);
+- never retries a write; a timeout or `5xx` on a create or budget set is reported
+  as **unknown**, with the user told to check their records;
+- settles a declarative change (pause/resume, category) by re-reading it rather
+  than leaving it unknown;
 - logs an audit event and records a metric.
 
 Cancelling, expiry (`APPROVAL_TTL_SECONDS`), and a repeated approval all prevent
@@ -408,10 +412,14 @@ User identity is never taken from chat text, request bodies, or tool arguments.
   parsing, so an unusual phrasing ("log my morning coffee, twelve fifty") may not
   produce either; the assistant asks for the amount rather than guessing at it.
 - Confirmed writes have no undo in the assistant: a created expense can only be
-  deleted, and a budget only re-set, through the application screens. `set_budget`
-  sets a month's value; it does not add to it.
+  deleted, a budget only re-set, and a paused rule only resumed, through the
+  application screens. `set_budget` sets a month's value; it does not add to it.
+- A recurring rule is matched by its name in the message, or by being the only
+  rule; with several rules and no name, the assistant asks which one rather than
+  guessing. Pausing stops only future occurrences; resuming does not backfill.
 - A write that times out or receives a `5xx` is recorded as `unknown` and is never
-  retried automatically; the user must check their records.
+  retried automatically; the user must check their records. Pause/resume and
+  category creation are the exception: their end state is re-read and reported.
 - Conversation history is bounded when sent to the model
   (`AGENT_HISTORY_MESSAGES`) and when returned by the API
   (`CONVERSATION_MESSAGE_LIMIT`); a retention/cleanup policy for stored

@@ -39,11 +39,14 @@ const TERMINATION_NOTES = {
   no_data: "No matching data was found.",
   tool_error: "A dependent service was unavailable for this answer.",
   model_error: "The assistant could not compose an answer.",
+  needs_target: "I need a specific record before I can propose a change.",
 };
 
 const PROPOSAL_ACTION_LABELS = {
   create_expense: "New expense",
   set_budget: "Budget update",
+  set_recurring_status: "Recurring expense",
+  create_category: "New category",
 };
 
 const APPROVAL_STATUS_LABELS = {
@@ -257,7 +260,7 @@ export default function AssistantSection({ token, onUnauthorized, onApplyDraft, 
       });
 
       if (action === "approve" && result.status === "executed") {
-        onDataChanged?.();
+        onDataChanged?.(result.action);
       }
     } catch (caught) {
       if (caught.status === 401) {

@@ -8,7 +8,7 @@ message, so these tests also prove the write path works with the provider down.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime, tzinfo
 from typing import Any, Self, cast
 
@@ -51,13 +51,31 @@ def _responder(
     categories: list[dict[str, Any]] | None = None,
     budget_exists: bool = False,
     expense_status: int = 201,
+    recurring: list[dict[str, Any]] | None = None,
+    status_result: int = 200,
+    on_status: Callable[[], None] | None = None,
+    category_status: int = 201,
+    category_body: dict[str, Any] | None = None,
 ) -> Responder:
     def respond(request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if path == CURRENT_USER_PATH:
             return _user(request)
         if path == "/api/categories":
+            if request.method == "POST":
+                return httpx.Response(
+                    category_status,
+                    json=category_body
+                    if category_body is not None
+                    else {"id": 7, "name": "Lunch", "systemDefined": False},
+                )
             return httpx.Response(200, json=categories if categories is not None else [])
+        if path == "/api/recurring-expenses":
+            return httpx.Response(200, json=recurring if recurring is not None else [])
+        if path.startswith("/api/recurring-expenses/") and path.endswith("/status"):
+            if on_status is not None:
+                on_status()
+            return httpx.Response(status_result, json={"id": 11, "active": True})
         if path == "/api/expenses" and request.method == "POST":
             return httpx.Response(expense_status, json={"id": 99})
         if path == "/api/budgets" and request.method == "POST":
@@ -262,3 +280,181 @@ def test_the_approval_surface_is_closed_when_writes_are_disabled(harness: Harnes
     names = [name for name, _ in parse_sse(response.text)]
     assert "draft" in names
     assert "proposal" not in names
+
+
+_RULES: list[dict[str, Any]] = [
+    {
+        "id": 11,
+        "description": "Gym membership",
+        "amount": 1500.0,
+        "frequency": "MONTHLY",
+        "active": True,
+        "nextExecutionDate": "2026-12-01",
+        "categoryName": "Health",
+    },
+    {
+        "id": 12,
+        "description": "Rent",
+        "amount": 20000.0,
+        "frequency": "MONTHLY",
+        "active": True,
+        "nextExecutionDate": "2026-12-01",
+        "categoryName": "Housing",
+    },
+]
+
+
+def _chat(harness: Harness, message: str) -> dict[str, Any]:
+    response = harness.client.post("/api/v1/chat", json={"message": message}, headers=AUTH_HEADERS)
+    assert response.status_code == 200, response.text
+    events = parse_sse(response.text)
+    assert "proposal" not in {name for name, _ in events}
+    return {name: payload for name, payload in events}["message_complete"]
+
+
+def _patches(harness: Harness) -> list[httpx.Request]:
+    return [request for request in harness.requests if request.method == "PATCH"]
+
+
+def test_pausing_a_recurring_expense_needs_approval_then_applies_once(
+    write_harness: Harness,
+) -> None:
+    harness = write_harness
+    harness.respond_from(_responder(recurring=[dict(rule) for rule in _RULES]))
+
+    proposal, complete = _propose(harness, "Pause my gym membership subscription")
+
+    assert complete["termination"] == "proposed"
+    assert proposal["action"] == "set_recurring_status"
+    assert {detail["label"]: detail["value"] for detail in proposal["details"]}["Change"] == (
+        "Active -> Paused"
+    )
+    assert _patches(harness) == []
+
+    status, body = _approve(harness, proposal["id"])
+
+    assert (status, body["status"]) == (200, "executed")
+    patches = _patches(harness)
+    assert len(patches) == 1
+    assert patches[0].url.path == "/api/recurring-expenses/11/status"
+    assert json.loads(patches[0].content) == {"active": False}
+
+
+def test_an_ambiguous_recurring_request_asks_which_rule_instead_of_guessing(
+    write_harness: Harness,
+) -> None:
+    harness = write_harness
+    harness.respond_from(_responder(recurring=[dict(rule) for rule in _RULES]))
+
+    complete = _chat(harness, "Pause my subscription")
+
+    assert complete["termination"] == "needs_target"
+    assert "Which one" in complete["content"]
+    assert _patches(harness) == []
+
+
+def test_the_only_recurring_expense_is_used_when_it_is_not_named(
+    write_harness: Harness,
+) -> None:
+    harness = write_harness
+    harness.respond_from(_responder(recurring=[dict(_RULES[0])]))
+
+    proposal, _ = _propose(harness, "Pause my subscription")
+
+    assert proposal["action"] == "set_recurring_status"
+    assert "Gym membership" in proposal["summary"]
+
+
+def test_a_rule_already_in_the_target_state_is_not_proposed(write_harness: Harness) -> None:
+    harness = write_harness
+    harness.respond_from(_responder(recurring=[dict(_RULES[0], active=False)]))
+
+    complete = _chat(harness, "Pause my gym membership")
+
+    assert complete["termination"] == "answered"
+    assert "already paused" in complete["content"]
+    assert _patches(harness) == []
+
+
+def test_a_rule_paused_after_the_proposal_is_not_written(write_harness: Harness) -> None:
+    harness = write_harness
+    rules = [dict(_RULES[0])]
+    harness.respond_from(_responder(recurring=rules))
+    proposal, _ = _propose(harness, "Pause my gym membership")
+
+    rules[0]["active"] = False
+    _, body = _approve(harness, proposal["id"])
+
+    assert body["status"] == "executed"
+    assert "already" in body["outcome"]
+    assert _patches(harness) == []
+
+
+def test_a_lost_status_response_is_reconciled_from_the_rule(write_harness: Harness) -> None:
+    harness = write_harness
+    rules = [dict(_RULES[0])]
+    harness.respond_from(_responder(recurring=rules))
+    proposal, _ = _propose(harness, "Pause my gym membership")
+
+    def apply_the_change() -> None:
+        rules[0]["active"] = False
+
+    harness.respond_from(_responder(recurring=rules, status_result=503, on_status=apply_the_change))
+    status, body = _approve(harness, proposal["id"])
+
+    assert (status, body["status"]) == (200, "executed")
+    assert body["outcome"].startswith("Confirmed")
+    assert len(_patches(harness)) == 1
+
+
+def test_creating_a_category_needs_approval(write_harness: Harness) -> None:
+    harness = write_harness
+    harness.respond_from(_responder())
+
+    proposal, _ = _propose(harness, "Create a category called Coffee & Snacks")
+
+    assert proposal["action"] == "create_category"
+    assert {detail["label"]: detail["value"] for detail in proposal["details"]}["Name"] == ("Coffee & Snacks")
+    assert not [
+        request
+        for request in harness.requests
+        if request.method == "POST" and request.url.path == "/api/categories"
+    ]
+
+    status, body = _approve(harness, proposal["id"])
+
+    assert (status, body["status"]) == (200, "executed")
+    created = [
+        request
+        for request in harness.requests
+        if request.method == "POST" and request.url.path == "/api/categories"
+    ]
+    assert len(created) == 1
+    assert json.loads(created[0].content) == {"name": "Coffee & Snacks"}
+
+
+def test_a_category_request_without_a_name_asks_for_one(write_harness: Harness) -> None:
+    harness = write_harness
+    harness.respond_from(_responder())
+
+    complete = _chat(harness, "Create a new category please")
+
+    assert complete["termination"] == "needs_target"
+    assert "called" in complete["content"]
+
+
+def test_a_rejected_category_reports_the_backend_message(write_harness: Harness) -> None:
+    harness = write_harness
+    harness.respond_from(_responder())
+    proposal, _ = _propose(harness, "Create a category called Lunch")
+
+    harness.respond_from(
+        _responder(
+            category_status=400,
+            category_body={"message": "Category with this name already exists", "details": []},
+        )
+    )
+    _, body = _approve(harness, proposal["id"])
+
+    assert body["status"] == "failed"
+    assert "already exists" in body["outcome"]

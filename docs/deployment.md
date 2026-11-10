@@ -112,7 +112,14 @@ Then, in **Assistant**:
 3. Press **Approve and save**. The card reports *Saved*.
 4. Repeat with a second proposal and press **Cancel**; confirm no expense is
    created.
-5. Check the audit trail:
+5. Send `Pause my subscription` (or name the rule, e.g. `Pause my gym membership`).
+   With several rules and no name, the assistant lists them and asks which one
+   instead of proposing. Approve a proposal and confirm the rule shows a paused
+   state in **Automation** with its past expenses untouched.
+6. Send `Create a category called Demo`. Approve it and confirm the category
+   appears in the expense and budget forms. Request the same name again and
+   approve: the backend rejects the duplicate and the card reports *Not saved*.
+7. Check the audit trail:
    `docker compose -f compose.staging.yaml logs expense-ai | grep write_`. Expect
    `write_proposal_created`, `write_approved` and `write_executed` for the first,
    and `write_cancelled` for the second — never a log line containing amounts.
@@ -253,10 +260,11 @@ docker compose -f compose.staging.yaml exec -T financial-db \
   storage) before the data matters.
 - Confirmed writes are **off** unless `WRITE_OPERATIONS_ENABLED=true`. Enabling
   them makes financial changes possible; the approval row is the only authorisation
-  and it is single-use and owner-scoped. A write that times out is reported as
-  `unknown` and is not retried. There is no undo in the assistant: an expense must
-  be deleted and a budget re-set through the application screens. See
-  `expense-ai/docs/write-operations.md`.
+  and it is single-use and owner-scoped. A create or budget set that times out is
+  reported as `unknown` and is not retried; a pause/resume or category creation is
+  settled by re-reading its end state. There is no undo in the assistant: an
+  expense must be deleted, a budget re-set, and a rule resumed through the
+  application screens. See `expense-ai/docs/write-operations.md`.
 - Pending approvals expire after `APPROVAL_TTL_SECONDS` and are never cleaned up by
   a background job; resolved and expired rows accumulate in `approval_requests`
   (small, but prune them if your retention policy requires it).

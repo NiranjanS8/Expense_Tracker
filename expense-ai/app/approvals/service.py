@@ -30,6 +30,7 @@ from app.approvals.repository import (
     ApprovalRepository,
 )
 from app.core.errors import (
+    AppError,
     ConflictError,
     InvalidRequestError,
     NotFoundError,
@@ -46,11 +47,14 @@ logger = logging.getLogger(__name__)
 
 CREATE_EXPENSE = "create_expense"
 SET_BUDGET = "set_budget"
-SUPPORTED_ACTIONS = frozenset({CREATE_EXPENSE, SET_BUDGET})
+SET_RECURRING_STATUS = "set_recurring_status"
+CREATE_CATEGORY = "create_category"
+SUPPORTED_ACTIONS = frozenset({CREATE_EXPENSE, SET_BUDGET, SET_RECURRING_STATUS, CREATE_CATEGORY})
 
 _PAYMENT_METHODS = frozenset({"CASH", "CARD", "UPI", "BANK_TRANSFER", "WALLET", "OTHER"})
 _MONTH = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_INTEGER = re.compile(r"^\d+$")
 
 _UNCERTAIN_MESSAGE = (
     "The request was sent but did not complete, so it may or may not have been saved. "
@@ -253,6 +257,10 @@ class ApprovalService:
                 return await self._create_expense(record, token=token, correlation_id=correlation_id)
             if record.action == SET_BUDGET:
                 return await self._set_budget(record, token=token, correlation_id=correlation_id)
+            if record.action == SET_RECURRING_STATUS:
+                return await self._set_recurring_status(record, token=token, correlation_id=correlation_id)
+            if record.action == CREATE_CATEGORY:
+                return await self._create_category(record, token=token, correlation_id=correlation_id)
         except InvalidRequestError as exception:
             return ExecutionOutcome(ok=False, message=exception.message)
         except NotFoundError as exception:
@@ -373,6 +381,10 @@ class ApprovalService:
     ) -> object:
         """Send the write, converting transport ambiguity into an unknown outcome."""
         try:
+            if method == "PATCH":
+                return await self._client().patch_json(
+                    path, token=token, payload=payload, correlation_id=correlation_id
+                )
             if method == "PUT":
                 return await self._client().put_json(
                     path, token=token, payload=payload, correlation_id=correlation_id
@@ -421,11 +433,171 @@ class ApprovalService:
             return False
         return True
 
+    async def _set_recurring_status(
+        self,
+        record: ApprovalRecord,
+        *,
+        token: AccessToken,
+        correlation_id: str | None,
+    ) -> ExecutionOutcome:
+        rule_id = record.resource_id or ""
+        target = bool(record.arguments["active"])
+        rule = await self._find_recurring_rule(rule_id, token=token, correlation_id=correlation_id)
+        if rule is None:
+            return ExecutionOutcome(
+                ok=False,
+                message="That recurring expense no longer exists, so nothing was changed.",
+            )
+
+        description = str(rule.get("description") or "That recurring expense")
+        if bool(rule.get("active")) == target:
+            return ExecutionOutcome(
+                ok=True,
+                message=(
+                    f'"{description}" is already {"active" if target else "paused"}; '
+                    "nothing needed to change."
+                ),
+                resource_id=rule_id,
+            )
+
+        try:
+            await self._send_write(
+                "PATCH",
+                f"/recurring-expenses/{rule_id}/status",
+                token=token,
+                payload={"active": target},
+                correlation_id=correlation_id,
+            )
+        except UncertainOutcome:
+            # This change is declarative, so the rule itself can say whether it
+            # applied. Reconcile instead of leaving an unresolvable unknown.
+            return await self._reconcile_recurring(
+                rule_id,
+                description=description,
+                target=target,
+                token=token,
+                correlation_id=correlation_id,
+            )
+
+        return ExecutionOutcome(
+            ok=True,
+            message=f'"{description}" is now {"active" if target else "paused"}.',
+            resource_id=rule_id,
+        )
+
+    async def _reconcile_recurring(
+        self,
+        rule_id: str,
+        *,
+        description: str,
+        target: bool,
+        token: AccessToken,
+        correlation_id: str | None,
+    ) -> ExecutionOutcome:
+        try:
+            rule = await self._find_recurring_rule(rule_id, token=token, correlation_id=correlation_id)
+        except AppError:
+            raise UncertainOutcome() from None
+
+        if rule is not None and bool(rule.get("active")) == target:
+            return ExecutionOutcome(
+                ok=True,
+                message=f'Confirmed: "{description}" is now {"active" if target else "paused"}.',
+                resource_id=rule_id,
+            )
+        return ExecutionOutcome(
+            ok=False,
+            message="The change did not go through, so nothing was changed. You can try again.",
+            resource_id=rule_id,
+        )
+
+    async def _find_recurring_rule(
+        self,
+        rule_id: str,
+        *,
+        token: AccessToken,
+        correlation_id: str | None,
+    ) -> dict[str, Any] | None:
+        body = await self._client().get_json(
+            "/recurring-expenses",
+            token=token,
+            correlation_id=correlation_id,
+            missing_message="The recurring expenses are unavailable.",
+        )
+        if not isinstance(body, list):
+            raise UpstreamUnavailableError()
+        for item in body:
+            if isinstance(item, dict) and str(item.get("id")) == rule_id:
+                return item
+        return None
+
+    async def _create_category(
+        self,
+        record: ApprovalRecord,
+        *,
+        token: AccessToken,
+        correlation_id: str | None,
+    ) -> ExecutionOutcome:
+        name = str(record.arguments["name"])
+        try:
+            created = await self._send_write(
+                "POST",
+                "/categories",
+                token=token,
+                payload={"name": name},
+                correlation_id=correlation_id,
+            )
+        except UncertainOutcome:
+            # Category names are unique, so a re-read settles it: either the name is
+            # present (created, or already there) or it is not.
+            return await self._reconcile_category(name, token=token, correlation_id=correlation_id)
+
+        return ExecutionOutcome(
+            ok=True,
+            message=f'Category "{name}" created.',
+            resource_id=_created_id(created),
+        )
+
+    async def _reconcile_category(
+        self,
+        name: str,
+        *,
+        token: AccessToken,
+        correlation_id: str | None,
+    ) -> ExecutionOutcome:
+        try:
+            exists = await self._category_name_exists(name, token=token, correlation_id=correlation_id)
+        except AppError:
+            raise UncertainOutcome() from None
+
+        if exists:
+            return ExecutionOutcome(ok=True, message=f'Category "{name}" is present.')
+        return ExecutionOutcome(ok=False, message="The category was not created. You can try again.")
+
+    async def _category_name_exists(
+        self,
+        name: str,
+        *,
+        token: AccessToken,
+        correlation_id: str | None,
+    ) -> bool:
+        body = await self._client().get_json(
+            "/categories",
+            token=token,
+            correlation_id=correlation_id,
+            missing_message="The category list is unavailable.",
+        )
+        if not isinstance(body, list):
+            raise UpstreamUnavailableError()
+        wanted = name.strip().lower()
+        return any(
+            isinstance(item, dict) and str(item.get("name", "")).strip().lower() == wanted for item in body
+        )
+
 
 def _validate_arguments(action: str, resource_id: str | None, arguments: dict[str, Any]) -> None:
     """Reject a proposal whose stored shape could not be executed safely."""
-    amount = _amount_number(arguments.get("amount"))
-    if amount <= 0:
+    if action in (CREATE_EXPENSE, SET_BUDGET) and _amount_number(arguments.get("amount")) <= 0:
         raise InvalidRequestError("The amount must be greater than zero.")
 
     if action == CREATE_EXPENSE:
@@ -445,6 +617,20 @@ def _validate_arguments(action: str, resource_id: str | None, arguments: dict[st
         month = resource_id or ""
         if not _MONTH.match(month) or arguments.get("budgetMonth") != month:
             raise InvalidRequestError("The budget month is not valid.")
+        return
+
+    if action == SET_RECURRING_STATUS:
+        if not _INTEGER.match(resource_id or ""):
+            raise InvalidRequestError("The recurring expense is not valid.")
+        if not isinstance(arguments.get("active"), bool):
+            raise InvalidRequestError("The new state is not valid.")
+        return
+
+    if action == CREATE_CATEGORY:
+        name = arguments.get("name")
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 100:
+            raise InvalidRequestError("The category name is not valid.")
+        return
 
 
 def _amount_number(value: object) -> float:

@@ -23,7 +23,18 @@ from app.agent.events import token
 from app.agent.policies import DATA_INTENT, classify_intent
 from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.state import AgentContext, AgentState
-from app.agent.writes import CategoryOption, extract_write
+from app.agent.writes import (
+    CategoryOption,
+    RecurringRule,
+    WriteIntent,
+    category_intent,
+    extract_category_name,
+    extract_recurring_status,
+    extract_write,
+    is_category_creation,
+    match_recurring_rule,
+    recurring_intent,
+)
 from app.approvals.service import CREATE_EXPENSE, ApprovalService
 from app.conversations.repository import ASSISTANT_ROLE, USER_ROLE
 from app.core.config import Settings
@@ -62,6 +73,26 @@ _DRAFT_NEEDS_AMOUNT = (
     "I can prepare that as a draft for you to save yourself, but I need the amount first. "
     "For example: \u201cadd a 12.50 coffee expense yesterday\u201d. Nothing has been saved."
 )
+
+
+def _ask_which_rule(rules: tuple[RecurringRule, ...]) -> AgentState:
+    """Ask which rule the caller means; never guess between several records."""
+    if not rules:
+        return {
+            "answer": "You don't have any recurring expenses set up yet.",
+            "termination": "needs_target",
+            "proposal": None,
+        }
+
+    shown = ", ".join(f'"{rule.description}"' for rule in rules[:5])
+    remainder = "" if len(rules) <= 5 else f" and {len(rules) - 5} more"
+    return {
+        "answer": (
+            f"You have {len(rules)} recurring expenses: {shown}{remainder}. Which one should I change?"
+        ),
+        "termination": "needs_target",
+        "proposal": None,
+    }
 
 
 class AgentNodes:
@@ -246,12 +277,23 @@ class AgentNodes:
         if not self._settings.write_operations_enabled:
             return await self.compose_draft(state, runtime)
 
+        message = state["user_message"]
+        context = runtime.context
+
+        recurring_target = extract_recurring_status(message)
+        if recurring_target is not None:
+            return await self._propose_recurring_status(message, recurring_target, context)
+        if is_category_creation(message):
+            return await self._propose_category(message, context)
+        return await self._propose_entry(state, runtime)
+
+    async def _propose_entry(self, state: AgentState, runtime: Runtime[AgentContext]) -> AgentState:
+        """An expense or budget, with the category resolved only if the user named it."""
+        message = state["user_message"]
         context = runtime.context
         today = date.today()
-        intent = extract_write(state["user_message"], today=today)
+        intent = extract_write(message, today=today)
 
-        # A category is only resolved when the user named one; the lookup supplies
-        # the owner's own category names, never a model guess.
         if (
             intent is not None
             and intent.action == CREATE_EXPENSE
@@ -259,7 +301,7 @@ class AgentNodes:
         ):
             intent = (
                 extract_write(
-                    state["user_message"],
+                    message,
                     today=today,
                     categories=await self._categories(context),
                 )
@@ -268,7 +310,42 @@ class AgentNodes:
 
         if intent is None:
             return await self.compose_draft(state, runtime)
+        return await self._record(intent, context)
 
+    async def _propose_category(self, message: str, context: AgentContext) -> AgentState:
+        name = extract_category_name(message)
+        if name is None:
+            return {
+                "answer": "What should the new category be called? Include the name in your message.",
+                "termination": "needs_target",
+                "proposal": None,
+            }
+        return await self._record(category_intent(name), context)
+
+    async def _propose_recurring_status(
+        self, message: str, target: bool, context: AgentContext
+    ) -> AgentState:
+        rules = await self._recurring_rules(context)
+        if rules is None:
+            return {
+                "answer": ("I couldn't load your recurring expenses just now, so nothing was changed."),
+                "termination": "tool_error",
+                "proposal": None,
+            }
+
+        rule = match_recurring_rule(message, rules)
+        if rule is None:
+            return _ask_which_rule(rules)
+        if rule.active is target:
+            state = "active" if target else "paused"
+            return {
+                "answer": f'"{rule.description}" is already {state}, so nothing needs to change.',
+                "termination": "answered",
+                "proposal": None,
+            }
+        return await self._record(recurring_intent(rule, active=target), context)
+
+    async def _record(self, intent: WriteIntent, context: AgentContext) -> AgentState:
         record = await self._approvals.propose(
             owner_id=context.user_context.user.user_id,
             conversation_id=context.conversation_id,
@@ -291,6 +368,48 @@ class AgentNodes:
                 "expires_at": record.expires_at.isoformat(),
             },
         }
+
+    async def _recurring_rules(self, context: AgentContext) -> tuple[RecurringRule, ...] | None:
+        """The owner's recurring rules, or ``None`` when they cannot be read."""
+        try:
+            body = await self._client().get_json(
+                "/recurring-expenses",
+                token=context.user_context.token,
+                correlation_id=context.user_context.correlation_id,
+                missing_message="The recurring expenses are unavailable.",
+            )
+        except AppError:
+            logger.warning("event=write_recurring_lookup_failed")
+            return None
+        if not isinstance(body, list):
+            return None
+
+        rules: list[RecurringRule] = []
+        for item in body:
+            if not isinstance(item, dict) or not isinstance(item.get("id"), int):
+                continue
+            description = item.get("description")
+            category_name = item.get("categoryName")
+            label = description.strip() if isinstance(description, str) else ""
+            if not label and isinstance(category_name, str):
+                label = category_name
+            try:
+                amount = float(str(item.get("amount")))
+            except (TypeError, ValueError):
+                amount = 0.0
+            next_date = item.get("nextExecutionDate")
+            rules.append(
+                RecurringRule(
+                    id=item["id"],
+                    description=label or "Recurring expense",
+                    amount=amount,
+                    frequency=str(item.get("frequency") or ""),
+                    active=bool(item.get("active")),
+                    next_execution_date=str(next_date) if next_date else None,
+                    category_name=category_name if isinstance(category_name, str) else None,
+                )
+            )
+        return tuple(rules)
 
     async def _categories(self, context: AgentContext) -> tuple[CategoryOption, ...]:
         """The owner's category names, used only to match what the user typed."""

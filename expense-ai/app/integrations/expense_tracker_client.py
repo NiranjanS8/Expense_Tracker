@@ -185,6 +185,25 @@ class ExpenseTrackerClient:
             missing_message=missing_message,
         )
 
+    async def patch_json(
+        self,
+        path: str,
+        *,
+        token: AccessToken,
+        payload: Mapping[str, object],
+        correlation_id: str | None = None,
+        missing_message: str | None = None,
+    ) -> object:
+        """Change one attribute of a record; never retried."""
+        return await self._write_json(
+            "PATCH",
+            path,
+            token=token,
+            payload=payload,
+            correlation_id=correlation_id,
+            missing_message=missing_message,
+        )
+
     async def _write_json(
         self,
         method: str,

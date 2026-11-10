@@ -48,6 +48,13 @@ def test_non_financial_messages_take_the_general_path(message: str) -> None:
         "Record my 1200 rent payment",
         "Set my budget for this month to 20000",
         "Record a 40 lunch expense yesterday",
+        "Pause my gym subscription",
+        "Turn off the rent autopay",
+        "Resume my gym subscription",
+        "Pause my gym membership",
+        "Reactivate my internet plan",
+        "Create a category called Lunch",
+        "Add a new category for groceries",
     ],
 )
 def test_requests_to_record_something_take_the_draft_path(message: str) -> None:
@@ -61,6 +68,12 @@ def test_requests_to_record_something_take_the_draft_path(message: str) -> None:
         "What should I set my budget to?",
         "How much did I spend this month?",
         "Can you make changes to my account for me?",
+        "What recurring subscriptions do I have?",
+        "How do I disable a subscription?",
+        "Which categories do I use most?",
+        "Stop spending so much this month",
+        "Resume my savings plan",
+        "Pause my budget",
     ],
 )
 def test_lookalike_phrases_never_take_the_draft_path(message: str) -> None:

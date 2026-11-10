@@ -89,6 +89,43 @@ _ENTRY_NOUNS = frozenset(
 
 # "Add up my expenses" and "What should I set my budget to?" both pair a create
 # verb with an entry noun, but neither asks for anything to be recorded.
+# Two writes are not "record an entry" requests: changing a recurring rule's state
+# and adding a category. They need their own conservative gates, because the same
+# words in a question ("what subscriptions do I have?") must stay on the read path.
+_STATUS_VERBS = frozenset(
+    {
+        "pause",
+        "paused",
+        "stop",
+        "suspend",
+        "disable",
+        "deactivate",
+        "resume",
+        "reactivate",
+        "restart",
+        "enable",
+        "unpause",
+    }
+)
+_RECURRING_NOUNS = frozenset({"recurring", "subscription", "subscriptions", "autopay"})
+_OTHER_RECORDS = frozenset(
+    {
+        "budget",
+        "budgets",
+        "goal",
+        "goals",
+        "saving",
+        "savings",
+        "spend",
+        "spending",
+        "expense",
+        "expenses",
+        "account",
+    }
+)
+_CATEGORY_NOUNS = frozenset({"category", "categories"})
+_CATEGORY_VERBS = frozenset({"create", "add", "make"})
+
 _PHRASAL_EXCLUSIONS = ("add up", "log in", "sign in", "sign up")
 _INTERROGATIVE_STARTS = frozenset(
     {
@@ -148,7 +185,15 @@ def _is_draft_request(lowered: str, tokens: set[str]) -> bool:
     words = lowered.split()
     if words and words[0].strip(".,!?:;\"'()") in _INTERROGATIVE_STARTS:
         return False
-    return bool(tokens & _CREATE_VERBS) and bool(tokens & _ENTRY_NOUNS)
+    if tokens & _CREATE_VERBS and tokens & _ENTRY_NOUNS:
+        return True
+    if tokens & _RECURRING_NOUNS and (
+        tokens & _STATUS_VERBS or (tokens & {"turn", "switch"} and tokens & {"on", "off"})
+    ):
+        return True
+    if tokens & _STATUS_VERBS and "my" in tokens and not tokens & _OTHER_RECORDS:
+        return True
+    return bool(tokens & _CATEGORY_NOUNS) and bool(tokens & _CATEGORY_VERBS)
 
 
 def conversation_title(message: str, *, max_length: int) -> str:

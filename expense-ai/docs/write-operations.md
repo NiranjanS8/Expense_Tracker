@@ -1,11 +1,12 @@
 # Confirmed write operations
 
-Status: **Tier B implemented, disabled by default.** The assistant can propose two
-changes — create an expense and set a monthly budget — and execute one only after
-the owner approves that exact proposal. `plan.md` §6 defines the gate; this note
-records the design that satisfies it.
+Status: **implemented, disabled by default.** The assistant can propose four
+changes — create an expense, set a monthly budget, pause or resume a recurring
+expense, and add a category — and execute one only after the owner approves that
+exact proposal. `plan.md` §6 defines the gate; this note records the design that
+satisfies it.
 
-Related: [`phase-6-scoping.md`](phase-6-scoping.md) (why only these two actions),
+Related: [`phase-6-scoping.md`](phase-6-scoping.md) (why these actions),
 `docs/deployment.md` (operational runbook).
 
 ## What the assistant may write
@@ -14,10 +15,14 @@ Related: [`phase-6-scoping.md`](phase-6-scoping.md) (why only these two actions)
 | --- | --- | --- |
 | `create_expense` | Adds one expense | `POST /expenses` |
 | `set_budget` | Sets one month's budget, creating it if absent | `GET /budgets/{month}` then `POST /budgets` or `PUT /budgets/{month}` |
+| `set_recurring_status` | Pauses or resumes one recurring rule | `GET /recurring-expenses` then `PATCH /recurring-expenses/{id}/status` |
+| `create_category` | Adds one custom category | `POST /categories` |
 
 Nothing else is enabled: no deletes, no edits to existing expenses, no goals, no
-recurring rules, no category or account changes. Those need an undo path the
-product does not have.
+recurring-rule creation or amount changes, no smart rules, no account changes.
+Deletes have no undo path in the product, and `PUT /expenses/{id}` is a full
+replace with no `updatedAt` or ETag, so a concurrent edit would be silently
+overwritten.
 
 ## The model is not in the write path
 
@@ -30,8 +35,15 @@ caller's message by the same deterministic code the draft path uses
   persists;
 - the path works with the model provider unavailable or unconfigured.
 
-When the parser cannot produce a complete change, the turn falls back to the
-existing form draft. A miss is therefore a draft or a question, never a write.
+When the parser cannot produce a complete change, the turn asks for the missing
+piece or falls back to the existing form draft. A miss is therefore a question or
+a draft, never a write.
+
+Two of the actions change an existing record rather than add one, so they need a
+specific target. `set_recurring_status` matches the rule the caller named against
+the owner's own `GET /recurring-expenses` list; if the name matches nothing and
+they have more than one rule, the assistant lists them and asks which one. It
+never guesses between several records.
 
 ## Lifecycle
 
@@ -78,11 +90,22 @@ cancelled while pending. Cancelled and expired approvals can never execute.
 `PUT` (exists) or `POST` (missing). If another writer creates the month between
 that read and the create, the one safe retry is a `PUT` to the same amount. An
 expense approval re-reads the category list when it named a category; if that
-category has since disappeared, nothing is written.
+category has since disappeared, nothing is written. A recurring-status request is
+answered with "already paused/resumed" instead of a card when the rule is already
+in that state; the check runs again at execution time in case it changed meanwhile,
+and makes no request at all.
 
-**Ambiguous outcomes.** Writes are never retried. A timeout or a 5xx is recorded as
-`unknown`, with a message telling the owner to check their records. This is the
-only honest report: the request reached the point where it may have committed.
+**Reconciliation for declarative changes.** Pausing, resuming and adding a
+category all describe an end state rather than an increment, so after a lost
+response the assistant can settle the outcome itself instead of leaving it
+unknown. It re-reads the rule's `active` flag, or the category list by name, and
+reports `executed` when the change is present and `failed` when it is absent. The
+write is still never retried in that second attempt; only a read is repeated.
+
+**Ambiguous outcomes.** Writes are never retried. A timeout or a 5xx on
+`create_expense` or `set_budget` is recorded as `unknown`, with a message telling
+the owner to check their records. This is the only honest report there: the
+request reached the point where it may have committed.
 
 **Definite failures.** A 4xx, an invalid session, or a rate limit means nothing was
 saved. The backend's own validation message (truncated) is shown to its owner.
@@ -162,6 +185,15 @@ Metrics: `expense_ai_write_proposals_total{action}` and
 - **Category matching is literal.** A category is used only if its name appears in
   the message; otherwise the backend's smart-category rules decide, and a write
   with no matching rule fails safely with the backend's message.
+- **Recurring rules are matched by name, literally.** The rule's description (or
+  category name) must appear in the message, or the owner must have exactly one
+  rule. A renamed rule changes the match; two identical names are reported as
+  ambiguous rather than picked.
+- **Pausing stops future occurrences only.** Expenses a rule already generated are
+  untouched, and resuming starts from the next scheduled date — there is no
+  backfill. The confirmation card says so.
+- **A new category is just a name.** It cannot set a smart rule, colour, or icon;
+  duplicates are rejected by the backend and surface as a failed approval.
 - **Payment method defaults to `OTHER` when unstated**, and the card says
   `Other (not specified)` so the owner can cancel.
 - **Ten-minute window.** After expiry the user must ask again; proposals are not

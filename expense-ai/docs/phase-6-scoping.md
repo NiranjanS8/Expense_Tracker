@@ -1,9 +1,10 @@
 # Phase 6 scoping — which write operations the assistant may ever propose
 
-Status: Tier A shipped (read-only drafts). **Tier B is implemented behind
-`WRITE_OPERATIONS_ENABLED`, off by default**; its design and runbook live in
-[`write-operations.md`](write-operations.md). Tiers C–D remain unimplemented. The
-owner approval required by `plan.md` §6, §7 has been given for Tier B only.
+Status: Tier A shipped (read-only drafts). **Tier B plus two Tier C actions are
+implemented behind `WRITE_OPERATIONS_ENABLED`, off by default**; their design and
+runbook live in [`write-operations.md`](write-operations.md). The remaining Tier C
+items stay unimplemented. The owner approval required by `plan.md` §6, §7 has been
+given for the implemented actions.
 
 This note records *which* operations could be handed to the assistant and why most
 of the API surface is deliberately excluded.
@@ -12,9 +13,9 @@ of the API surface is deliberately excluded.
 
 With writes disabled, the assistant cannot write: it has no write tool, the
 financial client's read path only issues `GET`, and there is no approval surface.
-With writes enabled, it can *propose* the two Tier B actions; a separate,
-owner-scoped, single-use approval executes them. In both modes the model never
-originates a value that persists.
+With writes enabled, it can *propose* four actions; a separate, owner-scoped,
+single-use approval executes them. In both modes the model never originates a
+value that persists.
 
 ## What makes a write safe enough to hand to an assistant
 
@@ -59,11 +60,21 @@ Tier B reuses the Tier A parser: the model is not asked to emit write arguments.
 
 ## Tier C — plausible later, needs the confirmation machinery proven first
 
-- **Pause/resume a recurring expense** (`PATCH /recurring-expenses/{id}/status`) —
-  touches no existing figure and is trivially reversible.
+Two Tier C actions shipped with Tier B once the approval machinery existed, because
+each has a *checkable end state* rather than an increment:
+
+| Operation | Endpoint | Why it was safe to add | Care taken |
+| --- | --- | --- | --- |
+| Pause/resume a recurring expense | `GET /recurring-expenses` then `PATCH /recurring-expenses/{id}/status` | Touches no existing figure, trivially reversible, declarative | Match one rule by name or refuse; no request when already in the target state; reconcile instead of reporting `unknown` |
+| Create a category | `POST /categories` | Additive, name-unique, unblocks expense creation | Literal name from the caller; backend duplicates surface as a failed approval with its own message |
+
+Still unimplemented:
+
 - **Update an expense** (`PUT /expenses/{id}`) — a full replace, not a patch, so
-  every field must be resent; show the before → after.
-- **Create a goal** (`POST /goals`) — declarative and deletable.
+  every field must be resent; show the before → after. No `updatedAt` or ETag means
+  a concurrent edit is silently overwritten.
+- **Create a goal** (`POST /goals`) — declarative and deletable, but a target amount
+  and target date must both be parsed from prose before it can be proposed.
 - **Update a recurring expense or goal** (`PUT`) — the consequence is future-facing
   and must be explained, not merely confirmed.
 - **Smart category rules** (`POST`/`PUT`/`DELETE /smart-category-rules`) — mechanics,
@@ -110,5 +121,8 @@ These are the Phase 6 acceptance criteria in implementation terms:
 1. ~~Review Tier A running against real data (read-only launch).~~ Done.
 2. ~~Enable Tier B behind a flag, starting with create-expense and set-budget.~~ The
    code and the flag exist; enabling is an operator decision per environment.
-3. Hold Tier C until the approval machinery has a track record.
-4. Treat Tier D as permanently excluded.
+3. ~~Add the two Tier C actions with a checkable end state (recurring status, category).~~
+   Shipped behind the same flag.
+4. Hold the remaining Tier C until the approval machinery has a track record in a
+   live environment.
+5. Treat Tier D as permanently excluded.

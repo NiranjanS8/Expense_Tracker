@@ -312,6 +312,27 @@ export default function App() {
     }
   }
 
+  async function refreshCategories() {
+    try {
+      setCategories(await apiRequest("/categories", { token }));
+    } catch (error) {
+      handleSessionExpiry(error);
+    }
+  }
+
+  function refreshAfterWrite(action) {
+    if (action === "set_budget") {
+      return loadBudgets();
+    }
+    if (action === "create_category") {
+      return refreshCategories();
+    }
+    if (action === "set_recurring_status") {
+      return loadAutomation();
+    }
+    return loadOverview();
+  }
+
   function handleSessionExpiry(error) {
     const message = extractErrorMessage(error);
     if (message.toLowerCase().includes("token") || message.toLowerCase().includes("unauthorized")) {
@@ -782,7 +803,7 @@ export default function App() {
             token={token}
             onUnauthorized={() => logout("Your session expired. Please log in again.")}
             onApplyDraft={applyDraft}
-            onDataChanged={() => Promise.all([loadOverview(), loadBudgets()])}
+            onDataChanged={refreshAfterWrite}
           />
         )}
       </section>
